@@ -9,6 +9,7 @@ from .conduction import *
 from .simulation import *
 from .indices import *
 from .custom_eos import *
+from .thin_loss import *
 
 __all__ = [
     # EOS
@@ -49,4 +50,8 @@ __all__ = [
     "y_from_ntot",
     "y_from_nhtot",
     "lte_eos",
+    "rad_loss_dm",
+    "logt_DM",
+    "lambda_DM",
+    "TownsendThinLoss",
 ]

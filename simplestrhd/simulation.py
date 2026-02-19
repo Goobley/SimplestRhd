@@ -30,6 +30,8 @@ class TimestepInfo:
     """current time"""
     dt: float
     """timestep"""
+    dt_sub: float
+    """substep"""
     cfl: float
     """associated cfl"""
 
@@ -124,16 +126,18 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
         dt_scheme = [0.5 * dt, 0.5 * dt, (1.0 / 6.0) * dt, 0.5 * dt]
 
     for substep, dt_sub in enumerate(dt_scheme):
+        ts.dt_sub = dt_sub
         fluxes = []
         set_bcs(state, dt_sub)
 
         sources[...] = 0.0
         w = cons_to_prim(Q, gamma=gamma)
+        state['W'] = w
         wL, wR = reconstruction_fn(w)
         fluxes = numeric_flux_with_padding(wL, wR, gamma=gamma, flux_fn=flux_fn)
 
         for s in source_terms:
-            s(xcc, Q, w, sources, ts.t)
+            s(state, sim_config, sources, ts)
 
         flux_div = fluxes[:, NUM_GHOST + 1 : -NUM_GHOST] - fluxes[:, NUM_GHOST : -(NUM_GHOST + 1)]
         flux_update = -dt / dx * flux_div + sources[:, NUM_GHOST : -NUM_GHOST] * dt
@@ -222,7 +226,7 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
             dt = np.nextafter(dt, np.inf)
 
     for i in range(max_steps):
-        timestep_info = TimestepInfo(current_time, dt, max_cfl)
+        timestep_info = TimestepInfo(current_time, dt, dt, max_cfl)
         run_step(state, sim_config, timestep_info, state["sources"])
 
         if use_conduction:

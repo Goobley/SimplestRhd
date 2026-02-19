@@ -112,4 +112,5 @@ def lte_eos(state, sim_config, include_ion_e=True, temp_err_bound=1e-3, find_ini
     )
     Q[IENE, :] = new_etot
     Q[IIONE, :] = new_spec_ion_e
+    state['y'] = y
 
