@@ -3,6 +3,7 @@ Spatial reconstruction methods
 """
 from typing import Tuple
 import numpy as np
+from .indices import NUM_GHOST
 
 Array = np.ndarray
 
@@ -64,7 +65,7 @@ def reconstruct_plm(W: Array) -> Tuple[Array, Array]:
     return WL, WR
 
 
-def reconstruct_ppm(W: Array, num_ghost: int = 2) -> Tuple[Array, Array]:
+def reconstruct_ppm(W: Array) -> Tuple[Array, Array]:
     """Piecewise parabolic reconstruction.
 
     Uses cubic interpolation with steepness constraints.
@@ -78,12 +79,12 @@ def reconstruct_ppm(W: Array, num_ghost: int = 2) -> Tuple[Array, Array]:
     """
     def limited_slope(i):
         dwL = (
-            W[:, num_ghost + i : -num_ghost + i]
-            - W[:, num_ghost + i - 1 : -num_ghost + i - 1]
+            W[:, NUM_GHOST + i : -NUM_GHOST + i]
+            - W[:, NUM_GHOST + i - 1 : -NUM_GHOST + i - 1]
         )
         dwR = (
-            W[:, num_ghost + i + 1 : None if i == num_ghost - 1 else -num_ghost + i + 1]
-            - W[:, num_ghost + i : -num_ghost + i]
+            W[:, NUM_GHOST + i + 1 : None if i == NUM_GHOST - 1 else -NUM_GHOST + i + 1]
+            - W[:, NUM_GHOST + i : -NUM_GHOST + i]
         )
         return slope_limiter(dwL, dwR)
 
@@ -94,12 +95,33 @@ def reconstruct_ppm(W: Array, num_ghost: int = 2) -> Tuple[Array, Array]:
     WL = W.copy()
     WR = W.copy()
     # NOTE(cmo): Cubic reconstruction
-    WL[:, num_ghost:-num_ghost] = 0.5 * (
-        W[:, num_ghost - 1 : -num_ghost - 1] + W[:, num_ghost:-num_ghost]
+    WL[:, NUM_GHOST:-NUM_GHOST] = 0.5 * (
+        W[:, NUM_GHOST - 1 : -NUM_GHOST - 1] + W[:, NUM_GHOST:-NUM_GHOST]
     ) - (1.0 / 6.0) * (dw_0 - dw_m)
-    WR[:, num_ghost:-num_ghost] = 0.5 * (
-        W[:, num_ghost:-num_ghost] + W[:, num_ghost + 1 : -num_ghost + 1]
+    WR[:, NUM_GHOST:-NUM_GHOST] = 0.5 * (
+        W[:, NUM_GHOST:-NUM_GHOST] + W[:, NUM_GHOST + 1 : -NUM_GHOST + 1]
     ) - (1.0 / 6.0) * (dw_p - dw_0)
+
+    if True:
+        lower = np.minimum(
+            W[:, NUM_GHOST-1:-NUM_GHOST-1],
+            W[:, NUM_GHOST:-NUM_GHOST],
+        )
+        upper = np.maximum(
+            W[:, NUM_GHOST-1:-NUM_GHOST-1],
+            W[:, NUM_GHOST:-NUM_GHOST],
+        )
+        np.clip(WL[:, NUM_GHOST:-NUM_GHOST], a_min=lower, a_max=upper, out=WL[:, NUM_GHOST:-NUM_GHOST])
+
+        lower = np.minimum(
+            W[:, NUM_GHOST:-NUM_GHOST],
+            W[:, NUM_GHOST+1:-NUM_GHOST+1],
+        )
+        upper = np.maximum(
+            W[:, NUM_GHOST:-NUM_GHOST],
+            W[:, NUM_GHOST+1:-NUM_GHOST+1],
+        )
+        np.clip(WR[:, NUM_GHOST:-NUM_GHOST], a_min=lower, a_max=upper, out=WR[:, NUM_GHOST:-NUM_GHOST])
 
     mask = ((WR - W) * (W - WL)) <= 0.0
     WL = np.where(mask, W, WL)

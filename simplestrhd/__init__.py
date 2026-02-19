@@ -3,11 +3,12 @@
 __version__ = "0.1.0"
 
 from .eos import *
-from .solver import *
+from .riemann_flux import *
 from .reconstruction import *
 from .conduction import *
-from .simulator import *
+from .simulation import *
 from .indices import *
+from .custom_eos import *
 
 __all__ = [
     # EOS
@@ -36,7 +37,7 @@ __all__ = [
     "IRHO",
     "IMOM",
     "IENE",
-    "IION",
+    "IIONE",
     "IVEL",
     "IPRE",
     "NUM_EQ",
@@ -45,4 +46,7 @@ __all__ = [
     "FIXED_BC",
     "USER_BC",
     "k_B",
+    "y_from_ntot",
+    "y_from_nhtot",
+    "lte_eos",
 ]

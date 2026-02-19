@@ -13,14 +13,17 @@ USER_BC = 3
 IRHO = 0
 IMOM = 1
 IENE = 2
-IION = 3
+IIONE = 3
 
 # Variable indices - primitive variables (W)
 IVEL = 1
 IPRE = 2
 
-# Number of equations (must match the number of variables)
+# Number of equations (must match the number of variables -- excluding tracers)
 NUM_EQ = 4
+
+# Number of ghost cells (should always be sufficient)
+NUM_GHOST = 3
 
 # Physical constants
 k_B = const.k_B.value

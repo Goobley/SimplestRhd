@@ -20,6 +20,7 @@ USER_BC = 3
 IRHO = 0
 IMOM = 1
 IENE = 2
+IION = 3
 
 IVEL = 1
 IPRE = 2
@@ -35,4 +36,4 @@ KAPPA0 = 8e-12 # Hyperbolic conduction coefficient [W m-1 K-7/2]. Default value 
 k_B = const.k_B.value
 
 
-NUM_EQ = 3
+NUM_EQ = 4

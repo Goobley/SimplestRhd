@@ -2,7 +2,7 @@
 Equation of state and thermodynamic functions
 """
 import numpy as np
-from .indices import IRHO, IMOM, IENE, IION, IVEL, IPRE, k_B
+from .indices import IRHO, IMOM, IENE, IIONE, IVEL, IPRE, k_B
 
 Array = np.ndarray
 
@@ -22,17 +22,18 @@ def cons_to_prim(Q: Array, gamma: float) -> Array:
     rho = Q[IRHO, :]
     mom = Q[IMOM, :]
     E = Q[IENE, :]
-    spec_e_ion = Q[IION, :]
+    spec_e_ion = Q[IIONE, :]
 
     v = mom / rho
     kinetic = 0.5 * rho * v**2
     e = E - kinetic - rho * spec_e_ion
+    # e = E - kinetic - spec_e_ion
     p = (gamma - 1.0) * e
 
     W[IRHO] = rho
     W[IVEL] = v
     W[IPRE] = p
-    W[IION] = spec_e_ion
+    W[IIONE] = spec_e_ion
 
     return W
 
@@ -52,15 +53,16 @@ def prim_to_cons(W: Array, gamma: float) -> Array:
     rho = W[IRHO, :]
     v = W[IVEL, :]
     p = W[IPRE, :]
-    spec_e_ion = W[IION, :]
+    spec_e_ion = W[IIONE, :]
 
     mom = rho * v
     energy = p / (gamma - 1.0) + 0.5 * mom**2 / rho + rho * spec_e_ion
+    # energy = p / (gamma - 1.0) + 0.5 * mom**2 / rho + spec_e_ion
 
     Q[IRHO] = rho
     Q[IMOM] = mom
     Q[IENE] = energy
-    Q[IION] = spec_e_ion
+    Q[IIONE] = spec_e_ion
 
     return Q
 
@@ -79,18 +81,20 @@ def prim_to_flux(W: Array, gamma: float) -> Array:
     rho = W[IRHO, :]
     v = W[IVEL, :]
     p = W[IPRE, :]
+    spec_e_ion = W[IIONE, :]
 
     mass_flux = rho * v
     mom_flux = mass_flux * v + p
 
     e_kin = 0.5 * rho * v**2
-    e_tot = p / (gamma - 1.0) + e_kin
+    e_tot = p / (gamma - 1.0) + e_kin + rho * spec_e_ion
+    # e_tot = p / (gamma - 1.0) + e_kin + spec_e_ion
     ene_flux = (e_tot + p) * v
 
     flux[IRHO] = mass_flux
     flux[IMOM] = mom_flux
     flux[IENE] = ene_flux
-    flux[IION] = 0.0
+    flux[IIONE] = 0.0
 
     return flux
 

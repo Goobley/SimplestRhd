@@ -5,14 +5,14 @@ from dataclasses import dataclass
 from matplotlib.pylab import gamma
 import numpy as np
 from .eos import cons_to_prim, prim_to_cons
-from .solver import rusanov_flux
-from .reconstruction import reconstruct_ppm
+from .riemann_flux import hll_flux, rusanov_flux
+from .reconstruction import reconstruct_plm, reconstruct_ppm
 from .indices import (
     NUM_GHOST,
     IRHO,
     IMOM,
     IENE,
-    IION,
+    IIONE,
     IVEL,
     IPRE,
     SYMMETRIC_BC,
@@ -34,7 +34,7 @@ class TimestepInfo:
     """associated cfl"""
 
 
-def rusanov_flux_with_padding(wL, wR, gamma: float, flux_fn=rusanov_flux):
+def numeric_flux_with_padding(wL, wR, gamma: float, flux_fn=hll_flux):
     """Apply Rusanov flux with padding for ghost cells.
 
     Args:
@@ -58,18 +58,19 @@ def rusanov_flux_with_padding(wL, wR, gamma: float, flux_fn=rusanov_flux):
     return full_flux
 
 
-def set_bcs(state, dt, bc_modes, fixed_bc, user_bcs, gamma: float):
+def set_bcs(state, dt):
     """Set boundary conditions.
 
     Args:
-        state: State dictionary
+        state: State dictionary containing Q, bc_modes, fixed_bcs, user_bcs, gamma
         dt: Timestep
-        bc_modes: Boundary condition modes (left, right)
-        fixed_bc: Fixed boundary condition values
-        user_bcs: User-defined boundary condition functions
-        gamma: Adiabatic index
     """
     Q = state["Q"]
+    bc_modes = state["bc_modes"]
+    fixed_bc = state["fixed_bcs"]
+    user_bcs = state["user_bcs"]
+    gamma = state["gamma"]
+
     if bc_modes[0] == SYMMETRIC_BC:
         Q[:, :NUM_GHOST] = Q[:, NUM_GHOST : 2 * NUM_GHOST][:, ::-1]
     elif bc_modes[0] == REFLECTING_BC:
@@ -91,26 +92,30 @@ def set_bcs(state, dt, bc_modes, fixed_bc, user_bcs, gamma: float):
         user_bcs[1](Q, dt, gamma=gamma)
 
 
-def run_step(state, ts: TimestepInfo, bc_modes, fixed_bcs, source_terms, gamma: float):
+def run_step(state, sim_config, ts: TimestepInfo, source_terms):
     """Perform one simulation step.
 
     Args:
-        state: State dictionary
+        state: State dictionary containing Q, bc_modes, fixed_bcs, user_bcs, gamma, dx, xcc
+        sim_config: Simulation configuration dict with reconstruction_fn, flux_fn
         ts: Timestep information
-        bc_modes: Boundary condition modes
-        fixed_bcs: Fixed boundary condition values
         source_terms: List of source term functions
-        gamma: Adiabatic index
     """
     Q = state["Q"]
     xcc = state["xcc"]
     dx = state["dx"]
+    gamma = state["gamma"]
+
+    reconstruction_fn = sim_config["reconstruction_fn"]
+    flux_fn = sim_config["flux_fn"]
+    stepper = sim_config.get("timestepper", "ssprk3")
+    custom_eos = sim_config.get("eos")
+    use_custom_eos = custom_eos is not None
 
     Q_old = Q.copy()
     sources = np.zeros_like(Q)
 
     dt = ts.dt
-    stepper = "rk4"
     if stepper == "rk2":
         dt_scheme = [dt, 0.5 * dt]
     elif stepper == "ssprk3":
@@ -120,12 +125,12 @@ def run_step(state, ts: TimestepInfo, bc_modes, fixed_bcs, source_terms, gamma: 
 
     for substep, dt_sub in enumerate(dt_scheme):
         fluxes = []
-        set_bcs(state, dt_sub, bc_modes, fixed_bcs, state["user_bcs"], gamma=gamma)
+        set_bcs(state, dt_sub)
 
         sources[...] = 0.0
         w = cons_to_prim(Q, gamma=gamma)
-        wL, wR = reconstruct_ppm(w)
-        fluxes = rusanov_flux_with_padding(wL, wR, gamma=gamma)
+        wL, wR = reconstruction_fn(w)
+        fluxes = numeric_flux_with_padding(wL, wR, gamma=gamma, flux_fn=flux_fn)
 
         for s in source_terms:
             s(xcc, Q, w, sources, ts.t)
@@ -162,20 +167,23 @@ def run_step(state, ts: TimestepInfo, bc_modes, fixed_bcs, source_terms, gamma: 
                     + (1.0 / 6.0) * flux_update
                 )
 
+        if use_custom_eos:
+            custom_eos(state, sim_config)
 
-def compute_dt(state, max_cfl, gamma: float):
+
+def compute_dt(state, max_cfl):
     """Compute timestep for CFL condition.
 
     Args:
-        state: State dictionary
+        state: State dictionary containing Q, gamma, dx
         max_cfl: Maximum CFL number
-        gamma: Adiabatic index
 
     Returns:
         dt: Timestep
     """
     from .eos import sound_speed
 
+    gamma = state["gamma"]
     w = cons_to_prim(state["Q"], gamma=gamma)
     cs = sound_speed(w, gamma=gamma)
     fast_speed = np.abs(w[IVEL]) + cs
@@ -184,38 +192,42 @@ def compute_dt(state, max_cfl, gamma: float):
     return np.min(dt_local)
 
 
-def run_sim(state, bc_modes, max_time, max_cfl=0.5, max_steps=10_000_000,
-            output_cadence=0.25, conduction_fn=None):
+def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
+            output_cadence=0.25):
     """Run the simulation.
 
     Args:
-        state: State dictionary with initial conditions
-        bc_modes: Boundary condition modes
+        state: State dictionary with initial conditions, bc_modes, fixed_bcs, user_bcs, gamma
+        sim_config: Simulation config dict with reconstruction_fn, flux_fn, conduction_fn
         max_time: Maximum simulation time
         max_cfl: Maximum CFL number
         max_steps: Maximum number of steps
         output_cadence: Time between outputs
-        gamma: Adiabatic index
-        conduction_fn: Optional conduction function
 
     Returns:
         snaps: List of (time, state) tuples
     """
-    USE_CONDUCTION = conduction_fn is not None
+    conduction_fn = sim_config.get("conduction_fn")
+    use_conduction = conduction_fn is not None
 
     current_time = 0.0
     snaps = []
-    next_output = current_time + output_cadence
+    next_output = min(current_time + output_cadence, max_time)
     snaps.append((current_time, state["Q"].copy()))
+
     dt = compute_dt(state, max_cfl=max_cfl)
+    if current_time + dt > next_output:
+        dt = next_output - current_time
+        while current_time + dt < next_output:
+            dt = np.nextafter(dt, np.inf)
 
     for i in range(max_steps):
         timestep_info = TimestepInfo(current_time, dt, max_cfl)
-        run_step(state, timestep_info, bc_modes, state["fixed_bcs"], state["sources"])
+        run_step(state, sim_config, timestep_info, state["sources"])
 
-        if USE_CONDUCTION:
+        if use_conduction:
             conduction_fn(state, dt)
-            set_bcs(state, dt, bc_modes, state["fixed_bcs"], state["user_bcs"])
+            set_bcs(state, dt)
 
         current_time += dt
         if current_time >= next_output:

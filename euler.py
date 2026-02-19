@@ -1,6 +1,6 @@
 import numpy as np
 Array = np.ndarray
-from config import DEFAULT_GAMMA, IRHO, IMOM, IENE, IVEL, IPRE, USE_CONDUCTION, CONDUCTION_ONLY, k_B
+from config import DEFAULT_GAMMA, IRHO, IMOM, IENE, IION, IVEL, IPRE, USE_CONDUCTION, CONDUCTION_ONLY, k_B
 
 def cons_to_prim(Q: Array, gamma: float=DEFAULT_GAMMA) -> Array:
     W = np.empty_like(Q)
@@ -8,6 +8,7 @@ def cons_to_prim(Q: Array, gamma: float=DEFAULT_GAMMA) -> Array:
     rho = Q[IRHO, :]
     mom = Q[IMOM, :]
     E = Q[IENE, :]
+    spec_e_ion = Q[IION, :]
 
     v = mom / rho
     kinetic = 0.5 * rho * v**2
@@ -17,6 +18,7 @@ def cons_to_prim(Q: Array, gamma: float=DEFAULT_GAMMA) -> Array:
     W[IRHO] = rho
     W[IVEL] = v
     W[IPRE] = p
+    W[IION] = spec_e_ion
 
     return W
 
@@ -26,6 +28,7 @@ def prim_to_cons(W: Array, gamma: float=DEFAULT_GAMMA) -> Array:
     rho = W[IRHO, :]
     v = W[IVEL, :]
     p = W[IPRE, :]
+    spec_e_ion = W[IION, :]
 
     mom = rho * v
     energy = p / (gamma - 1.0) + 0.5 * mom**2 / rho
@@ -33,6 +36,7 @@ def prim_to_cons(W: Array, gamma: float=DEFAULT_GAMMA) -> Array:
     Q[IRHO] = rho
     Q[IMOM] = mom
     Q[IENE] = energy
+    Q[IION] = spec_e_ion
 
     return Q
 
@@ -57,6 +61,7 @@ def prim_to_flux(W: Array, gamma: float=DEFAULT_GAMMA) -> Array:
     flux[IRHO] = mass_flux
     flux[IMOM] = mom_flux
     flux[IENE] = ene_flux
+    flux[IION] = 0.0
 
     return flux
 

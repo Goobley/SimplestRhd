@@ -9,7 +9,7 @@ from simplestrhd import (
     IRHO,
     IVEL,
     IPRE,
-    IION,
+    IIONE,
     NUM_GHOST,
     SYMMETRIC_BC,
     IMOM,
@@ -22,7 +22,7 @@ config = {
     "output_cadence": 0.1,
     "max_cfl": 0.1,
     "gamma": 1.4,
-    "num_grid_points": 100,
+    "num_grid_points": 64,
     "x_min": 0.0,
     "x_max": 1.0,
 }

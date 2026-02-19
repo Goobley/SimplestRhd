@@ -15,7 +15,7 @@ from reconstruct import reconstruct_fog, reconstruct_plm, reconstruct_ppm
 
 from config import *
 
-def rusanov_flux_with_padding(wL, wR, gamma: float=DEFAULT_GAMMA, flux_fn=rusanov_flux):
+def rusanov_flux_with_padding(wL, wR, gamma: float=DEFAULT_GAMMA, flux_fn=hll_flux):
     # N.B. This takes the reconstructed faces in the cell frame, and returns a padded array with length (M+2*NUM_GHOST+1), i.e the flux at each interface in the block
     unpadded_flux = flux_fn(
         wR,
@@ -28,7 +28,8 @@ def rusanov_flux_with_padding(wL, wR, gamma: float=DEFAULT_GAMMA, flux_fn=rusano
     full_flux[:, -NUM_GHOST:] = 0.0
     return full_flux
 
-def set_bcs(state, dt, bc_modes, fixed_bc, user_bcs, gamma=DEFAULT_GAMMA):
+def set_bcs(state, dt, bc_modes, fixed_bc, user_bcs):
+    gamma = state["gamma"]
     Q = state["Q"]
     if bc_modes[0] == SYMMETRIC_BC:
         Q[:, :NUM_GHOST] = Q[:, NUM_GHOST:2*NUM_GHOST][:, ::-1]
@@ -59,7 +60,8 @@ class TimestepInfo:
     cfl: float
     """associated cfl"""
 
-def run_step(state, ts: TimestepInfo, bc_modes, fixed_bcs, source_terms, gamma: float=DEFAULT_GAMMA):
+def run_step(state, ts: TimestepInfo, bc_modes, fixed_bcs, source_terms):
+    gamma = state["gamma"]
     Q = state["Q"]
     xcc = state["xcc"]
     dx = state["dx"]
@@ -78,11 +80,12 @@ def run_step(state, ts: TimestepInfo, bc_modes, fixed_bcs, source_terms, gamma: 
 
     for substep, dt_sub in enumerate(dt_scheme):
         fluxes = []
-        set_bcs(state, dt_sub, bc_modes, fixed_bcs, state["user_bcs"], gamma=gamma)
+        set_bcs(state, dt_sub, bc_modes, fixed_bcs, state["user_bcs"])
 
         sources[...] = 0.0
         w = cons_to_prim(Q, gamma=gamma)
-        wL, wR = reconstruct_ppm(w)
+        # wL, wR = reconstruct_ppm(w)
+        wL, wR = reconstruct_plm(w)
         # wL, wR = reconstruct_fog(w)
         fluxes = rusanov_flux_with_padding(wL, wR, gamma=gamma)
 
@@ -97,7 +100,8 @@ def run_step(state, ts: TimestepInfo, bc_modes, fixed_bcs, source_terms, gamma: 
             else:
                 Q[:, NUM_GHOST:-NUM_GHOST] = 0.5 * (
                     Q_old[:, NUM_GHOST:-NUM_GHOST] + Q[:, NUM_GHOST:-NUM_GHOST]
-                ) + flux_update
+                    + flux_update
+                )
         elif stepper == "ssprk3":
             if substep == 0:
                 Q[:, NUM_GHOST:-NUM_GHOST] += flux_update
@@ -125,7 +129,8 @@ def compute_dt(state, max_cfl):
     """
     Computes the min dt for the model
     """
-    w = cons_to_prim(state["Q"])
+    gamma = state["gamma"]
+    w = cons_to_prim(state["Q"], gamma=gamma)
     cs = sound_speed(w, gamma=gamma)
     fast_speed = np.abs(w[1]) + cs
 
@@ -137,6 +142,7 @@ def sod_ics(x, gamma=DEFAULT_GAMMA):
         np.where(x < 0.5, 1.0, 0.125),
         np.zeros_like(x),
         np.where(x < 0.5, 1.0, 0.1),
+        np.zeros_like(x),
     ])
     return prim_to_cons(w, gamma=gamma)
 
@@ -148,6 +154,7 @@ def big_sod_ics(x, gamma=DEFAULT_GAMMA):
         np.where(x < 0.5, 1.0, 0.125),
         np.zeros_like(x),
         np.where(x < 0.5, 10.0, 0.1),
+        np.zeros_like(x),
     ])
     return prim_to_cons(w, gamma=gamma)
 
@@ -159,6 +166,7 @@ def woodward_collela_ics(x, gamma=DEFAULT_GAMMA):
         np.ones_like(x),
         np.zeros_like(x),
         np.where(x < 0.1, 1e3, np.where(x < 0.9, 0.01, 100.0)),
+        np.zeros_like(x),
     ])
     return prim_to_cons(w, gamma=gamma)
 
@@ -171,6 +179,7 @@ def navarro_hypertc_test_ics(x, gamma=DEFAULT_GAMMA):
     v = np.zeros_like(x)
     avg_mass = 1.0
     p = 1.0 * rho / (avg_mass * P_MASS) * k_B * temperature
+    spec_e_ion = np.zeros_like(x)
 
     if not USE_CONDUCTION:
         raise ValueError("Need conduction")
@@ -181,6 +190,7 @@ def navarro_hypertc_test_ics(x, gamma=DEFAULT_GAMMA):
     w[IRHO] = rho
     w[IVEL] = v
     w[IPRE] = p
+    w[IION] = spec_e_ion
     return prim_to_cons(w, gamma=gamma)
 
 def navarro_hypertc_test_bcs():
@@ -191,22 +201,27 @@ def navarro_hypertc_test_left_bc(block, dt, gamma=DEFAULT_GAMMA):
     block.Q[IMOM, :NUM_GHOST] = 0.0
     p = 1.0 / P_MASS * k_B * 0.1
     block.Q[IENE, :NUM_GHOST] = p / (gamma - 1.0)
+    block.Q[IION, :NUM_GHOST] = 0.0
 
 def navarro_hypertc_test_right_bc(block, dt, gamma=DEFAULT_GAMMA):
     block.Q[IRHO, -NUM_GHOST:] = 1.0
     block.Q[IMOM, -NUM_GHOST:] = 0.0
     p = 1.0 / P_MASS * k_B * 1.0
     block.Q[IENE, -NUM_GHOST:] = p / (gamma - 1.0)
+    block.Q[IION, -NUM_GHOST:] = 0.0
 
 def uniform_coronal_loop_ics(x, gamma=DEFAULT_GAMMA):
     temperature = 1e6
     rho = np.ones_like(x) * 1e-12
     v = np.zeros_like(x)
     p = rho / (P_MASS * MEAN_MOLECULAR_MASS) * k_B * temperature
+    spec_e_ion = np.zeros_like(x)
     w = np.empty((NUM_EQ, x.shape[0]))
     w[IRHO] = rho
     w[IVEL] = v
     w[IPRE] = p
+    w[IION] = spec_e_ion
+    return prim_to_cons(w, gamma=gamma)
 
 def uniform_coronal_loop_bcs():
     # return [USER_BC, USER_BC]
@@ -217,10 +232,12 @@ def uniform_coronal_loop_left_bc(block, dt, gamma=DEFAULT_GAMMA):
     rho = 1e-12
     v = 0.0
     p = rho / (P_MASS * MEAN_MOLECULAR_MASS) * k_B * temperature
+    spec_e_ion = 0.0
     w = np.empty((NUM_EQ, 1))
     w[IRHO] = rho
     w[IVEL] = v
     w[IPRE] = p
+    w[IION] = spec_e_ion
     q = prim_to_cons(w, gamma=gamma)
     block.Q[:, :NUM_GHOST] = q
     block.Q[IMOM, :NUM_GHOST] = np.maximum(-block.Q[IMOM, NUM_GHOST], 0.0)
@@ -231,17 +248,20 @@ def uniform_coronal_loop_right_bc(block, dt, gamma=DEFAULT_GAMMA):
     rho = 1e-12
     v = 0.0
     p = rho / (P_MASS * MEAN_MOLECULAR_MASS) * k_B * temperature
+    spec_e_ion = 0.0
     w = np.empty((NUM_EQ, 1))
     w[IRHO] = rho
     w[IVEL] = v
     w[IPRE] = p
+    w[IION] = spec_e_ion
     q = prim_to_cons(w, gamma=gamma)
     block.Q[:, -NUM_GHOST:] = q
     block.Q[IMOM, -NUM_GHOST:] = np.minimum(-block.Q[IMOM, -NUM_GHOST-1], 0.0)
     # block.Q[ENE, -NUM_GHOST:] = block.Q[ENE, -NUM_GHOST-1]
 
 
-def run_sim(state, bc_modes, max_time, max_cfl=0.5, max_steps=10_000_000, output_cadence=0.25, gamma=DEFAULT_GAMMA):
+def run_sim(state, bc_modes, max_time, max_cfl=0.5, max_steps=10_000_000, output_cadence=0.25):
+    gamma = state["gamma"]
     current_time = 0.0
     snaps = []
     next_output = current_time + output_cadence
@@ -249,10 +269,10 @@ def run_sim(state, bc_modes, max_time, max_cfl=0.5, max_steps=10_000_000, output
     dt = compute_dt(state, max_cfl=max_cfl)
     for i in range(max_steps):
         timestep_info = TimestepInfo(current_time, dt, max_cfl)
-        run_step(state, timestep_info, bc_modes, state["fixed_bcs"], state["sources"], gamma=gamma)
+        run_step(state, timestep_info, bc_modes, state["fixed_bcs"], state["sources"])
         if USE_CONDUCTION:
             implicit_thermal_conduction(state, dt, gamma=gamma)
-            set_bcs(state, dt, bc_modes, state["fixed_bcs"], state["user_bcs"], gamma=gamma)
+            set_bcs(state, dt, bc_modes, state["fixed_bcs"], state["user_bcs"])
 
         current_time += dt
         if current_time >= next_output:
@@ -371,7 +391,7 @@ if __name__ == '__main__':
     # max_time = 3000.0
     # output_cadence = 5.0
 
-    grid = construct_x_grid(0.0, 1.0, 100)
+    grid = construct_x_grid(0.0, 1.0, 50)
     state = dict(
         xcc=grid,
         dx=grid[1]-grid[0],
