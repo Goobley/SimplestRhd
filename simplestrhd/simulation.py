@@ -20,6 +20,7 @@ from .indices import (
     FIXED_BC,
     USER_BC,
 )
+from .tracers import normalise_tracers, tracer_flux
 
 Array = np.ndarray
 
@@ -36,17 +37,20 @@ class TimestepInfo:
     """associated cfl"""
 
 
-def numeric_flux_with_padding(wL, wR, gamma: float, flux_fn=hll_flux):
-    """Apply Rusanov flux with padding for ghost cells.
+def numeric_flux_with_padding(wL, wR, gamma: float, flux_fn=hll_flux, tracersL=None, tracersR=None):
+    """Apply numeric flux with padding for ghost cells.
 
     Args:
-        wL: Left reconstructed states
+        wL: Left reconstructed states for each cell
         wR: Right reconstructed states
         gamma: Adiabatic index
         flux_fn: Riemann solver function
+        tracersL: Left reconstructed states for normalised tracers
+        tracersR: Right reconstructed states for normalised tracers
 
     Returns:
         full_flux: Flux array with padding for ghost cells
+        tr_flux: Flux array for tracers (equivalently padded). None if tracersL or tracersR are None.
     """
     unpadded_flux = flux_fn(
         wR,
@@ -57,7 +61,20 @@ def numeric_flux_with_padding(wL, wR, gamma: float, flux_fn=hll_flux):
     full_flux[:, 1:] = unpadded_flux
     full_flux[:, :NUM_GHOST] = 0.0
     full_flux[:, -NUM_GHOST:] = 0.0
-    return full_flux
+
+    tr_flux = None
+    if tracersL is not None and tracersR is not None:
+        unpadded_tracer_flux = tracer_flux(
+            tracersR,
+            np.roll(tracersL, -1, axis=1),
+            unpadded_flux[IRHO],
+        )
+        tr_flux = np.empty((tracersL.shape[0], tracersL.shape[1] + 1))
+        tr_flux[:, 1:] = unpadded_tracer_flux
+        tr_flux[:, :NUM_GHOST] = 0.0
+        tr_flux[:, -NUM_GHOST:] = 0.0
+
+    return full_flux, tr_flux
 
 
 def set_bcs(state, dt):
@@ -116,6 +133,7 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
 
     Q_old = Q.copy()
     sources = np.zeros_like(Q)
+    tracers_old = state["tracers"].copy() if "tracers" in state else None
 
     dt = ts.dt
     if stepper == "rk2":
@@ -134,42 +152,86 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
         w = cons_to_prim(Q, gamma=gamma)
         state['W'] = w
         wL, wR = reconstruction_fn(w)
-        fluxes = numeric_flux_with_padding(wL, wR, gamma=gamma, flux_fn=flux_fn)
+
+        n_tracers_L, n_tracers_R = None, None
+        if tracers_old is not None:
+            tracers = state["tracers"]
+            norm_tracers = normalise_tracers(tracers, Q[IRHO])
+            n_tracers_L, n_tracers_R = reconstruction_fn(norm_tracers)
+
+        fluxes, tracer_flux = numeric_flux_with_padding(
+            wL,
+            wR,
+            gamma=gamma,
+            flux_fn=flux_fn,
+            tracersL=n_tracers_L,
+            tracersR=n_tracers_R
+        )
 
         for s in source_terms:
             s(state, sim_config, sources, ts)
 
         flux_div = fluxes[:, NUM_GHOST + 1 : -NUM_GHOST] - fluxes[:, NUM_GHOST : -(NUM_GHOST + 1)]
         flux_update = -dt / dx * flux_div + sources[:, NUM_GHOST : -NUM_GHOST] * dt
+        if tracers_old is not None:
+            t_flux_update = -dt / dx * (
+                tracer_flux[:, NUM_GHOST + 1: -NUM_GHOST] - tracer_flux[:, NUM_GHOST : -(NUM_GHOST + 1)]
+                )
         if stepper == "rk2":
             if substep == 0:
                 Q[:, NUM_GHOST : -NUM_GHOST] += flux_update
+                if tracers_old is not None:
+                    tracers[:, NUM_GHOST : -NUM_GHOST] += t_flux_update
             else:
                 Q[:, NUM_GHOST : -NUM_GHOST] = 0.5 * (
                     Q_old[:, NUM_GHOST : -NUM_GHOST] + Q[:, NUM_GHOST : -NUM_GHOST] + flux_update
                 )
+                if tracers_old is not None:
+                    tracers[:, NUM_GHOST : -NUM_GHOST] = 0.5 * (
+                        tracers_old[:, NUM_GHOST : -NUM_GHOST] + tracers[:, NUM_GHOST : -NUM_GHOST] + t_flux_update
+                    )
         elif stepper == "ssprk3":
             if substep == 0:
                 Q[:, NUM_GHOST : -NUM_GHOST] += flux_update
+                if tracers_old is not None:
+                    tracers[:, NUM_GHOST : -NUM_GHOST] += t_flux_update
             elif substep == 1:
                 Q[:, NUM_GHOST : -NUM_GHOST] = (
                     0.75 * Q_old[:, NUM_GHOST : -NUM_GHOST]
                     + 0.25 * (Q[:, NUM_GHOST : -NUM_GHOST] + flux_update)
                 )
+                if tracers_old is not None:
+                    tracers[:, NUM_GHOST : -NUM_GHOST] = (
+                        0.75 * tracers_old[:, NUM_GHOST : -NUM_GHOST]
+                        + 0.25 * (tracers[:, NUM_GHOST : -NUM_GHOST] + t_flux_update)
+                    )
             else:
                 Q[:, NUM_GHOST : -NUM_GHOST] = (
                     (1.0 / 3.0) * Q_old[:, NUM_GHOST : -NUM_GHOST]
                     + (2.0 / 3.0) * (Q[:, NUM_GHOST : -NUM_GHOST] + flux_update)
                 )
+                if tracers_old is not None:
+                    tracers[:, NUM_GHOST : -NUM_GHOST] = (
+                        (1.0 / 3.0) * tracers_old[:, NUM_GHOST : -NUM_GHOST]
+                        +  (2.0 / 3.0) * (tracers[:, NUM_GHOST : -NUM_GHOST] + t_flux_update)
+                    )
         elif stepper == "rk4":
             if substep != 2:
                 Q[:, NUM_GHOST : -NUM_GHOST] += 0.5 * flux_update
+                if tracers_old is not None:
+                    tracers[:, NUM_GHOST : -NUM_GHOST] += 0.5 * t_flux_update
             else:
                 Q[:, NUM_GHOST : -NUM_GHOST] = (
                     (2.0 / 3.0) * Q_old[:, NUM_GHOST : -NUM_GHOST]
                     + (1.0 / 3.0) * Q[:, NUM_GHOST : -NUM_GHOST]
                     + (1.0 / 6.0) * flux_update
                 )
+                if tracers_old is not None:
+                    tracers[:, NUM_GHOST : -NUM_GHOST] = (
+                        (2.0 / 3.0) * tracers_old[:, NUM_GHOST : -NUM_GHOST]
+                        +  (1.0 / 3.0) * tracers[:, NUM_GHOST : -NUM_GHOST]
+                        + (1.0 / 6.0) * t_flux_update
+                    )
 
         if use_custom_eos:
             custom_eos(state, sim_config)

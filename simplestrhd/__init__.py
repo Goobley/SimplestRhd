@@ -8,8 +8,10 @@ from .reconstruction import *
 from .conduction import *
 from .simulation import *
 from .indices import *
-from .custom_eos import *
+from .lte_eos import *
+from .tracer_eos import *
 from .thin_loss import *
+from .lw_interface import *
 
 __all__ = [
     # EOS
@@ -54,4 +56,6 @@ __all__ = [
     "logt_DM",
     "lambda_DM",
     "TownsendThinLoss",
+    "PwInterface",
+    "tracer_eos",
 ]

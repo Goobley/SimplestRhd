@@ -3,6 +3,7 @@ Equation of state and thermodynamic functions
 """
 import numpy as np
 from .indices import IRHO, IMOM, IENE, IIONE, IVEL, IPRE, k_B
+import lightweaver as lw
 
 Array = np.ndarray
 
@@ -114,15 +115,18 @@ def sound_speed(W: Array, gamma: float) -> Array:
     return np.sqrt(gamma * p / rho)
 
 
-def temperature_si(pressure, n_baryon, y=1.0):
+def temperature_si(pressure, n_baryon, y=1.0, total_abund=1.0):
     """Compute temperature in SI units.
 
     Args:
         pressure: Pressure in Pa
         n_baryon: Baryon number density in m^-3
         y: Ionization parameter (default 1.0)
+        total_abund: Abundance scaling factor (default 1.0, set to None for default from Lw (~1.09))
 
     Returns:
         T: Temperature in K
     """
-    return pressure / (n_baryon * (1.0 + y) * k_B)
+    if total_abund is None:
+        total_abund = lw.DefaultAtomicAbundance.totalAbundance
+    return pressure / (n_baryon * (total_abund + y) * k_B)
