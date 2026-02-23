@@ -24,7 +24,9 @@ from simplestrhd import (
     NUM_GHOST,
     reconstruct_ppm,
     rusanov_flux,
-    hll_flux
+    hll_flux,
+    load_latest_snapshot,
+    load_snapshot,
 )
 from setup import sod_ics, sod_bcs, config
 
@@ -60,6 +62,9 @@ if __name__ == "__main__":
         "flux_fn": hll_flux,
         "timestepper": "rk2",
         "conduction_fn": None,
+        "bc_modes": sod_bcs(),
+        "fixed_bcs": None,
+        "user_bcs": None,
     }
 
     # Create state dictionary
@@ -67,16 +72,16 @@ if __name__ == "__main__":
         "xcc": grid,
         "dx": grid[1] - grid[0],
         "Q": sod_ics(grid, gamma=gamma),
-        "fixed_bcs": None,
-        "user_bcs": None,
         "sources": [],
         "gamma": gamma,
-        "bc_modes": sod_bcs(),
+        "time": 0.0,
+        "snap_num": 0,
     }
 
     # Run simulation
     print("Running Sod shock tube test case...")
-    snaps = run_sim(
+    snapshot_dir = Path(__file__).parent / "snapshots"
+    n_iterations = run_sim(
         state,
         sim_config,
         max_time=config["max_time"],
@@ -84,41 +89,86 @@ if __name__ == "__main__":
         max_cfl=config["max_cfl"],
     )
 
-    print(f"Simulation complete. Generated {len(snaps)} snapshots.")
+    print(f"Simulation complete. {n_iterations} iterations, snapshots saved to {snapshot_dir}")
 
-    # Plot final state
-    times, states = zip(*snaps)
-    final_time = times[-1]
-    final_state = states[-1]
+    # Load the final snapshot from the first run before continuing
+    print("\nTesting snapshot loading...")
+    state_template = {
+        "sources": [],
+        "bc_modes": sod_bcs(),
+        "fixed_bcs": None,
+        "user_bcs": None,
+    }
+    try:
+        final_state_1 = load_latest_snapshot(str(snapshot_dir), state_template=state_template)
+        loaded_time = final_state_1["time"]
+        loaded_snap_num = final_state_1.get("snap_num", -1)
+        print(f"Successfully loaded snapshot at t={loaded_time:.3f}, snap_num={loaded_snap_num}")
+    except FileNotFoundError as e:
+        print(f"Failed to load snapshot: {e}")
+        final_state_1 = state.copy()
+
+    restart_state = load_snapshot(str(snapshot_dir / "snap_00001.nc"), state_template=state_template, decrement_snap_num=True)
+    # Continue simulation from loaded snapshot
+    print(f"\nContinuing simulation from t={restart_state['time']:.3f}...")
+    n_iterations_2 = run_sim(
+        restart_state,
+        sim_config,
+        max_time=config["max_time"],
+        output_cadence=config["output_cadence"],
+        max_cfl=config["max_cfl"],
+    )
+
+    print(f"Continued simulation complete. {n_iterations_2} iterations, snapshots saved to snapshots")
+
+    # Load final snapshot from the continued run
+    print("\nLoading final snapshot from continued run...")
+    final_state_2 = load_latest_snapshot(str(snapshot_dir), state_template=state_template)
+
+    final_time_1 = final_state_1["time"]
+    final_time_2 = final_state_2["time"]
 
     # Convert to primitive variables
-    w = cons_to_prim(final_state, gamma=gamma)
+    w1 = cons_to_prim(final_state_1["Q"], gamma=gamma)
+    w2 = cons_to_prim(final_state_2["Q"], gamma=gamma)
 
     # Extract interior points (excluding ghost cells)
     interior_slice = slice(NUM_GHOST, -NUM_GHOST)
     x_plot = grid[interior_slice]
-    rho = w[IRHO, interior_slice]
-    v = w[IVEL, interior_slice]
-    p = w[IPRE, interior_slice]
+    rho1 = w1[IRHO, interior_slice]
+    v1 = w1[IVEL, interior_slice]
+    p1 = w1[IPRE, interior_slice]
 
-    # Create plots
+    rho2 = w2[IRHO, interior_slice]
+    v2 = w2[IVEL, interior_slice]
+    p2 = w2[IPRE, interior_slice]
+
+    # Create plots comparing both runs
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
-    axes[0].plot(x_plot, rho)
+    axes[0].plot(x_plot, rho1, label=f"Run 1 (t={final_time_1:.3f})")
+    axes[0].plot(x_plot, rho2, '--', label=f"Run 2 (t={final_time_2:.3f})")
     axes[0].set_ylabel("Density")
     axes[0].set_xlabel("x")
-    axes[0].set_title(f"t = {final_time:.3f}")
+    axes[0].set_title("Density Comparison")
     axes[0].grid(True)
+    axes[0].legend()
 
-    axes[1].plot(x_plot, v)
+    axes[1].plot(x_plot, v1, label=f"Run 1 (t={final_time_1:.3f})")
+    axes[1].plot(x_plot, v2, '--', label=f"Run 2 (t={final_time_2:.3f})")
     axes[1].set_ylabel("Velocity")
     axes[1].set_xlabel("x")
+    axes[1].set_title("Velocity Comparison")
     axes[1].grid(True)
+    axes[1].legend()
 
-    axes[2].plot(x_plot, p)
+    axes[2].plot(x_plot, p1, label=f"Run 1 (t={final_time_1:.3f})")
+    axes[2].plot(x_plot, p2, '--', label=f"Run 2 (t={final_time_2:.3f})")
     axes[2].set_ylabel("Pressure")
     axes[2].set_xlabel("x")
+    axes[2].set_title("Pressure Comparison")
     axes[2].grid(True)
+    axes[2].legend()
 
     plt.tight_layout()
     plt.savefig("sod_results.png", dpi=150)
@@ -128,3 +178,4 @@ if __name__ == "__main__":
         plt.show()
     except:
         pass
+

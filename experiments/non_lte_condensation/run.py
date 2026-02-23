@@ -147,7 +147,10 @@ if __name__ == "__main__":
         "conduction_fn": None,
         "eos": partial(tracer_eos, total_abund=None),
         # TODO(cmo): This is a bit of a hack
-        "h_mass": const.m_p.value * lw.DefaultAtomicAbundance.totalAbundance
+        "h_mass": const.m_p.value * lw.DefaultAtomicAbundance.totalAbundance,
+        "bc_modes": [SYMMETRIC_BC, SYMMETRIC_BC],
+        "fixed_bcs": None,
+        "user_bcs": None,
     }
 
     def condensation_ics(x, gamma):
@@ -191,17 +194,15 @@ if __name__ == "__main__":
         "dx": grid[1] - grid[0],
         "Q": q,
         "tracers": tracers,
-        "fixed_bcs": None,
-        "user_bcs": None,
         "sources": [
             pw_interface,
         ],
         "gamma": gamma,
-        "bc_modes": [SYMMETRIC_BC, SYMMETRIC_BC],
+        "time": 0.0,
     }
 
-    # # Run simulation
-    snaps = run_sim(
+    # Run simulation
+    num_iter = run_sim(
         state,
         sim_config,
         max_time=config["max_time"],
@@ -210,13 +211,9 @@ if __name__ == "__main__":
     )
 
 
-    # Plot final state
-    times, states = zip(*snaps)
-    final_time = times[-1]
-    final_state = states[-1]
-
     # Convert to primitive variables
-    w = cons_to_prim(final_state, gamma=gamma)
+    w = cons_to_prim(state["Q"], gamma=gamma)
+    final_time = state["time"]
 
     # Extract interior points (excluding ghost cells)
     interior_slice = slice(NUM_GHOST, -NUM_GHOST)

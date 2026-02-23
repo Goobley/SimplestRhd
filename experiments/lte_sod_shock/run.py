@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
+
 try:
     get_ipython().run_line_magic("matplotlib", "")
 except:
@@ -31,6 +32,7 @@ from simplestrhd import (
     rusanov_flux,
     hll_flux,
     lte_eos,
+    load_latest_snapshot,
 )
 from setup import lte_sod_ics, lte_sod_bcs, config, L0, rho0, v0, t0
 
@@ -67,6 +69,9 @@ if __name__ == "__main__":
         "timestepper": "ssprk3",
         "conduction_fn": None,
         "eos": partial(lte_eos, include_ion_e=config["include_ion_e"]),
+        "bc_modes": lte_sod_bcs(),
+        "fixed_bcs": None,
+        "user_bcs": None,
     }
 
     # Create state dictionary
@@ -74,16 +79,14 @@ if __name__ == "__main__":
         "xcc": grid,
         "dx": grid[1] - grid[0],
         "Q": lte_sod_ics(grid, gamma=gamma),
-        "fixed_bcs": None,
-        "user_bcs": None,
         "sources": [],
         "gamma": gamma,
-        "bc_modes": lte_sod_bcs(),
+        "time": 0.0,
     }
 
     # Run simulation
     print("Running LTE Sod shock tube test case...")
-    snaps = run_sim(
+    run_sim(
         state,
         sim_config,
         max_time=config["max_time"],
@@ -91,15 +94,9 @@ if __name__ == "__main__":
         max_cfl=config["max_cfl"],
     )
 
-    print(f"Simulation complete. Generated {len(snaps)} snapshots.")
-
-    # Plot final state
-    times, states = zip(*snaps)
-    final_time = times[-1]
-    final_state = states[-1]
-
     # Convert to primitive variables
-    w = cons_to_prim(final_state, gamma=gamma)
+    w = cons_to_prim(state["Q"], gamma=gamma)
+    final_time = state["time"]
 
     # Extract interior points (excluding ghost cells)
     interior_slice = slice(NUM_GHOST, -NUM_GHOST)

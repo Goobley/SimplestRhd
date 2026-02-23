@@ -78,6 +78,9 @@ if __name__ == "__main__":
         "flux_fn": hll_flux,
         "timestepper": "ssprk3",
         "conduction_fn": None,
+        "bc_modes": [SYMMETRIC_BC, SYMMETRIC_BC],
+        "fixed_bcs": None,
+        "user_bcs": None,
     }
 
     def condensation_ics(x, gamma):
@@ -107,18 +110,16 @@ if __name__ == "__main__":
         "xcc": grid,
         "dx": grid[1] - grid[0],
         "Q": condensation_ics(grid, gamma=gamma),
-        "fixed_bcs": None,
-        "user_bcs": None,
         "sources": [
             TownsendThinLoss("simple"),
             # background_heating,
         ],
         "gamma": gamma,
-        "bc_modes": [SYMMETRIC_BC, SYMMETRIC_BC],
+        "time": 0.0,
     }
 
     # Run simulation
-    snaps = run_sim(
+    num_iter = run_sim(
         state,
         sim_config,
         max_time=config["max_time"],
@@ -127,13 +128,9 @@ if __name__ == "__main__":
     )
 
 
-    # Plot final state
-    times, states = zip(*snaps)
-    final_time = times[-1]
-    final_state = states[-1]
-
     # Convert to primitive variables
-    w = cons_to_prim(final_state, gamma=gamma)
+    w = cons_to_prim(state["Q"], gamma=gamma)
+    final_time = state["time"]
 
     # Extract interior points (excluding ghost cells)
     interior_slice = slice(NUM_GHOST, -NUM_GHOST)

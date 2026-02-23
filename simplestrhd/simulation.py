@@ -4,6 +4,7 @@ Main simulation runner and time integration
 from dataclasses import dataclass
 from matplotlib.pylab import gamma
 import numpy as np
+from pathlib import Path
 from .eos import cons_to_prim, prim_to_cons
 from .riemann_flux import hll_flux, rusanov_flux
 from .reconstruction import reconstruct_plm, reconstruct_ppm
@@ -21,6 +22,7 @@ from .indices import (
     USER_BC,
 )
 from .tracers import normalise_tracers, tracer_flux
+from .io import save_snapshot
 
 Array = np.ndarray
 
@@ -77,17 +79,18 @@ def numeric_flux_with_padding(wL, wR, gamma: float, flux_fn=hll_flux, tracersL=N
     return full_flux, tr_flux
 
 
-def set_bcs(state, dt):
+def set_bcs(state, sim_config, dt):
     """Set boundary conditions.
 
     Args:
-        state: State dictionary containing Q, bc_modes, fixed_bcs, user_bcs, gamma
+        state: State dictionary containing Q, gamma
+        sim_config: Simulation config dict containing bc_modes, fixed_bcs, user_bcs
         dt: Timestep
     """
     Q = state["Q"]
-    bc_modes = state["bc_modes"]
-    fixed_bc = state["fixed_bcs"]
-    user_bcs = state["user_bcs"]
+    bc_modes = sim_config["bc_modes"]
+    fixed_bc = sim_config["fixed_bcs"]
+    user_bcs = sim_config["user_bcs"]
     gamma = state["gamma"]
 
     if bc_modes[0] == SYMMETRIC_BC:
@@ -115,8 +118,8 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
     """Perform one simulation step.
 
     Args:
-        state: State dictionary containing Q, bc_modes, fixed_bcs, user_bcs, gamma, dx, xcc
-        sim_config: Simulation configuration dict with reconstruction_fn, flux_fn
+        state: State dictionary containing Q, gamma, dx, xcc
+        sim_config: Simulation configuration dict with reconstruction_fn, flux_fn, bc_modes, fixed_bcs, user_bcs
         ts: Timestep information
         source_terms: List of source term functions
     """
@@ -146,7 +149,7 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
     for substep, dt_sub in enumerate(dt_scheme):
         ts.dt_sub = dt_sub
         fluxes = []
-        set_bcs(state, dt_sub)
+        set_bcs(state, sim_config, dt_sub)
 
         sources[...] = 0.0
         w = cons_to_prim(Q, gamma=gamma)
@@ -259,27 +262,42 @@ def compute_dt(state, max_cfl):
 
 
 def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
-            output_cadence=0.25):
+            output_cadence=0.25, snapshot_dir="snapshots"):
     """Run the simulation.
 
     Args:
-        state: State dictionary with initial conditions, bc_modes, fixed_bcs, user_bcs, gamma
-        sim_config: Simulation config dict with reconstruction_fn, flux_fn, conduction_fn
+        state: State dictionary with initial conditions, gamma, sources, unsplit_sources, time
+        sim_config: Simulation config dict with reconstruction_fn, flux_fn, conduction_fn,
+                   bc_modes, fixed_bcs, user_bcs
         max_time: Maximum simulation time
         max_cfl: Maximum CFL number
         max_steps: Maximum number of steps
-        output_cadence: Time between outputs
+        output_cadence: Time between outputs (snapshots are written at these intervals)
+        snapshot_dir: Directory to save snapshots to. Snapshots are automatically saved at
+                     output_cadence intervals with filenames snap_NNNNN.nc. Default is "snapshots".
+                     Use None to disable snapshot writing.
 
     Returns:
-        snaps: List of (time, state) tuples
+        n_iterations: Number of iterations completed
     """
     conduction_fn = sim_config.get("conduction_fn")
     use_conduction = conduction_fn is not None
 
-    current_time = 0.0
-    snaps = []
+    # Initialize snapshot directory if provided
+    if snapshot_dir is not None:
+        snapshot_dir = Path(snapshot_dir)
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        # Initialize snap_num if not already in state
+        if "snap_num" not in state:
+            state["snap_num"] = 0
+
+    current_time = state.get("time", 0.0)
+    state["time"] = current_time
     next_output = min(current_time + output_cadence, max_time)
-    snaps.append((current_time, state["Q"].copy()))
+
+    # Save initial snapshot if snapshot_dir is provided
+    if snapshot_dir is not None:
+        save_snapshot(state, str(snapshot_dir))
 
     dt = compute_dt(state, max_cfl=max_cfl)
     if current_time + dt > next_output:
@@ -291,13 +309,24 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
         timestep_info = TimestepInfo(current_time, dt, dt, max_cfl)
         run_step(state, sim_config, timestep_info, state["sources"])
 
+        # Apply unsplit source terms once per full timestep
+        unsplit_sources = state.get("unsplit_sources", [])
+        if unsplit_sources:
+            unsplit_state_update = np.zeros_like(state["Q"])
+            for s in unsplit_sources:
+                s(state, sim_config, unsplit_state_update, timestep_info)
+            state["Q"][:, NUM_GHOST : -NUM_GHOST] += unsplit_state_update[:, NUM_GHOST : -NUM_GHOST] * timestep_info.dt
+
         if use_conduction:
             conduction_fn(state, dt)
-            set_bcs(state, dt)
+            set_bcs(state, sim_config, dt)
 
         current_time += dt
+        state["time"] = current_time
         if current_time >= next_output:
-            snaps.append((current_time, state["Q"].copy()))
+            # Save snapshot if snapshot_dir is provided
+            if snapshot_dir is not None:
+                save_snapshot(state, str(snapshot_dir))
             next_output = current_time + output_cadence
 
         if i % 50 == 0 or current_time >= max_time:
@@ -316,4 +345,4 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
         if np.isnan(dt):
             break
 
-    return snaps
+    return i + 1
