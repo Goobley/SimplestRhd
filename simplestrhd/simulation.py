@@ -131,6 +131,7 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
     reconstruction_fn = sim_config["reconstruction_fn"]
     flux_fn = sim_config["flux_fn"]
     stepper = sim_config.get("timestepper", "ssprk3")
+    run_hydro = sim_config.get("run_hydro", True)
     custom_eos = sim_config.get("eos")
     use_custom_eos = custom_eos is not None
 
@@ -170,6 +171,10 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
             tracersL=n_tracers_L,
             tracersR=n_tracers_R
         )
+        if not run_hydro:
+            fluxes[...] = 0.0
+            if tracer_flux is not None:
+                tracer_flux[...] = 0.0
 
         for s in source_terms:
             s(state, sim_config, sources, ts)
@@ -318,7 +323,7 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
             state["Q"][:, NUM_GHOST : -NUM_GHOST] += unsplit_state_update[:, NUM_GHOST : -NUM_GHOST] * timestep_info.dt
 
         if use_conduction:
-            conduction_fn(state, dt)
+            conduction_fn(state, sim_config, dt)
             set_bcs(state, sim_config, dt)
 
         current_time += dt
