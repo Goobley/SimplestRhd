@@ -3,7 +3,6 @@ from .indices import (
     IMOM,
     IENE,
     IIONE,
-    K_B
 )
 
 import numpy as np
@@ -12,6 +11,7 @@ import astropy.units as u
 import lightweaver as lw
 
 M_P = const.m_p.value
+K_B = const.k_B.value
 CHI_H = const.Ryd.to(u.J, equivalencies=u.spectral()).value
 
 def saha_rhs_H(temperature):

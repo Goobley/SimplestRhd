@@ -25,6 +25,3 @@ NUM_EQ = 4
 
 # Number of ghost cells (should always be sufficient)
 NUM_GHOST = 3
-
-# Physical constants
-K_B = const.k_B.value

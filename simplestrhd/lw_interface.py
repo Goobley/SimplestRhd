@@ -249,13 +249,9 @@ class PwInterface:
             tracers[start_idx:start_idx + pops.shape[0], mask] = pops[:, :mask_count][:, ::-1]
             start_idx += pops.shape[0]
         state["tracers"] = tracers
-        ratio = tracers[0] / tracers[1:].sum(axis=0)
-        print(f"On update: {ratio.min()}, {ratio.max()}")
 
     def fill_from_tracers(self, state, sim_config):
         tracers = state["tracers"]
-        ratio = tracers[0] / tracers[1:].sum(axis=0)
-        print(f"On fill: {ratio.min()}, {ratio.max()}")
         mask = self.mask_region(state, sim_config)
         mask_count = np.sum(mask)
         # TODO(cmo): Check consistency between the two n_e's. Our EOS needs to
@@ -278,4 +274,3 @@ class PwInterface:
         self.solve_rt(dt=ts.dt)
         if "tracers" in state:
             self.update_tracers(state, sim_config)
-        print("RT update complete")

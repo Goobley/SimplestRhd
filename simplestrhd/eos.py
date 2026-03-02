@@ -2,11 +2,13 @@
 Equation of state and thermodynamic functions
 """
 import numpy as np
-from .indices import IRHO, IMOM, IENE, IIONE, IVEL, IPRE, K_B
+from .indices import IRHO, IMOM, IENE, IIONE, IVEL, IPRE
 import lightweaver as lw
+import astropy.constants as const
 
 Array = np.ndarray
 
+K_B = const.k_B.value
 
 def cons_to_prim(Q: Array, gamma: float) -> Array:
     """Convert conserved variables to primitive variables.
@@ -120,8 +122,8 @@ def temperature_si(pressure, n_h, y=1.0, total_abund=1.0, k_B=K_B):
 
     Args:
         pressure: Pressure in Pa
-        n_h: Hydrogen number density in m^-3
-        y: Ionization factor (default 1.0)
+        n_h: Hydrogen number density (neutral and ionised) in m^-3
+        y: Ionization factor relative to n_h (default 1.0)
         total_abund: Abundance scaling factor (default 1.0, set to None for default from Lw (~1.09))
         k_B: Boltzmann constant (default SI: 1.38e-23 m2 kg s-2 K-1)
 
