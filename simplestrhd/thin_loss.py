@@ -1,5 +1,6 @@
 import numpy as np
 import astropy.constants as const
+import lightweaver as lw
 
 from .indices import (
     IRHO,
@@ -10,6 +11,7 @@ from .indices import (
 from .eos import temperature_si
 
 M_P = const.m_p.value
+K_B = const.k_B.value
 
 logt_DM = np.array([
     2.0, 2.1, 2.2, 2.3, 2.4,
@@ -106,14 +108,25 @@ class TownsendThinLoss:
         self.townsend_alpha_k = townsend_alpha_k
 
     def __call__(self, state, sim_config, sources, ts):
-        y = state.get('y', 1.0)
-        h_mass = sim_config.get('h_mass', M_P)
-        gamma = state['gamma']
+        y = state.get("y", 1.0)
+        h_mass = sim_config.get("h_mass", M_P)
+        mass_per_h = sim_config.get("avg_mass", 1.0)
+        total_abund = sim_config.get("total_abund", 1.0)
+        if total_abund is None:
+            total_abund = lw.DefaultAtomicAbundance.totalAbundance
+        k_B = sim_config.get("k_B", K_B)
+        gamma = state["gamma"]
         Q = state["Q"]
         W = state["W"]
-        nh_tot = Q[IRHO] / h_mass
+        nh_tot = Q[IRHO] / (h_mass * mass_per_h)
         ne = nh_tot * y
-        temperature = temperature_si(W[IPRE], nh_tot, y)
+        temperature = temperature_si(
+            W[IPRE],
+            nh_tot,
+            y,
+            total_abund=total_abund,
+            k_B=k_B
+        )
 
         lambdas = self.lambdas
         temps = self.temps
@@ -150,10 +163,19 @@ class TownsendThinLoss:
 def rad_loss_dm(state, sim_config, sources, time):
     y = state.get('y', 1.0)
     h_mass = sim_config.get('h_mass', M_P)
+    mass_per_h = sim_config.get("avg_mass", 1.0)
+    total_abund = sim_config.get("total_abund", 1.0)
+    k_B = sim_config.get("k_B", K_B)
     Q = state["Q"]
     W = state["W"]
-    nh_tot = Q[IRHO] / h_mass
-    temperature = temperature_si(W[IPRE], nh_tot, y)
+    nh_tot = Q[IRHO] / (h_mass * mass_per_h)
+    temperature = temperature_si(
+        W[IPRE],
+        nh_tot,
+        y,
+        total_abund=total_abund,
+        k_B=k_B,
+    )
 
     # u.Unit('erg cm3 s-1').to('J m3 s-1')
     # Out[6]: 1.0000000000000003e-13

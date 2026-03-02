@@ -1,8 +1,7 @@
-"""SimplestRhd: A minimal 1D relativistic hydrodynamics solver with modular physics."""
+"""SimplestRhd: A minimal 1D radiation hydrodynamics solver with modular physics."""
 
 # Import everything from all modules to maintain backward compatibility
 from .conduction import *
-from .config_template import *
 from .eos import *
 from .indices import *
 from .io import *

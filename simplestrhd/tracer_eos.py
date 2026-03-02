@@ -2,13 +2,14 @@ import astropy.constants as const
 import astropy.units as u
 import lightweaver as lw
 
-from .indices import IRHO, IMOM, IENE, IIONE, k_B
+from .indices import IRHO, IMOM, IENE, IIONE
 from .eos import temperature_si
 
 M_P = const.m_p.value
 CHI_H = const.Ryd.to(u.J, equivalencies=u.spectral()).value
+K_B = const.k_B.value
 
-def tracer_eos(state, sim_config, verbose=False, total_abund=1.0):
+def tracer_eos(state, sim_config, verbose=False):
     """
     Updates the total and ionisation energy to be consistent with the tracer array.
     Assumes tracer array is [ne, n_H, ...]
@@ -17,6 +18,8 @@ def tracer_eos(state, sim_config, verbose=False, total_abund=1.0):
     mass_per_h = sim_config.get("avg_mass", 1.0)
     h_mass = sim_config.get("h_mass", M_P)
     chi_H = sim_config.get("chi_H", CHI_H)
+    k_B = sim_config.get("k_B", K_B)
+    total_abund = sim_config.get("total_abund", 1.0)
     if total_abund is None:
         total_abund = lw.DefaultAtomicAbundance.totalAbundance
 
@@ -32,7 +35,13 @@ def tracer_eos(state, sim_config, verbose=False, total_abund=1.0):
     # NOTE(cmo): Freeze temperature over EOS step
     # TODO(cmo): Use a fixed temperature in the state if present.
     pressure = (Q[IENE] - Q[IIONE] * rho - e_kinetic) * (gamma - 1.0)
-    temperature = temperature_si(pressure, nh, y, total_abund=total_abund)
+    temperature = temperature_si(
+        pressure,
+        nh,
+        y,
+        total_abund=total_abund,
+        k_B=k_B,
+    )
     spec_ion_e = y * rho_to_nh_tot * chi_H
     etot = (
         1.0 / (gamma - 1.0) * (total_abund + y) * nh * k_B * temperature

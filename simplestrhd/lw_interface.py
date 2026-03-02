@@ -34,7 +34,6 @@ class PwInterface:
             initial_conserve_pressure=True,
             stat_eq=True,
             quiet=False,
-            total_abund=1.0,
         ):
         self.threshold_temperature = threshold_temperature
         self.background_params = background_params
@@ -47,9 +46,12 @@ class PwInterface:
         self.stat_eq = stat_eq
         self.quiet = quiet
 
+        total_abund = sim_config.get("total_abund", 1.0)
         if total_abund is None:
             total_abund = lw.DefaultAtomicAbundance.totalAbundance
         self.total_abund = total_abund
+        mass_per_h = sim_config.get("mass_per_h", 1.0)
+        self.mass_per_h = mass_per_h
 
         self.growth_factor = growth_factor
         self.shrink_factor = shrink_factor
@@ -127,10 +129,15 @@ class PwInterface:
         h_mass = sim_config.get('h_mass', M_P)
         q = state["Q"]
         w = cons_to_prim(q, gamma=state["gamma"])
-        nh_tot = q[IRHO] / h_mass
+        nh_tot = q[IRHO] / (h_mass * self.mass_per_h)
         ne = nh_tot * y
         # TODO(cmo): Look at pushing the temperature through the state dict
-        temperature = temperature_si(w[IPRE], nh_tot, y, total_abund=self.total_abund)
+        temperature = temperature_si(
+            w[IPRE],
+            nh_tot,
+            y,
+            total_abund=self.total_abund,
+        )
 
         z = state["xcc"][mask]
         temperature = temperature[mask]
@@ -180,8 +187,13 @@ class PwInterface:
         h_mass = sim_config.get('h_mass', M_P)
         q = state["Q"]
         w = cons_to_prim(q, gamma=state["gamma"])
-        nh_tot = q[IRHO] / h_mass
-        temperature = temperature_si(w[IPRE], nh_tot, y, total_abund=self.total_abund)
+        nh_tot = q[IRHO] / (h_mass * self.mass_per_h)
+        temperature = temperature_si(
+            w[IPRE],
+            nh_tot,
+            y,
+            total_abund=self.total_abund,
+        )
 
         mask = temperature > self.threshold_temperature
         # NOTE(cmo): Shrink high temperature "islands" by one on each side to preserve gradients
@@ -196,9 +208,14 @@ class PwInterface:
         h_mass = sim_config.get('h_mass', M_P)
         q = state["Q"]
         w = cons_to_prim(q, gamma=state["gamma"])
-        nh_tot = q[IRHO] / h_mass
+        nh_tot = q[IRHO] / (h_mass * self.mass_per_h)
         ne = nh_tot * y
-        temperature = temperature_si(w[IPRE], nh_tot, y, total_abund=self.total_abund)
+        temperature = temperature_si(
+            w[IPRE],
+            nh_tot,
+            y,
+            total_abund=self.total_abund,
+        )
 
         tracers = state.get("tracers", np.zeros((self.num_tracers, state["xcc"].shape[0])))
         tracers[0, :] = ne
@@ -219,7 +236,7 @@ class PwInterface:
         mask = self.mask_region(state, sim_config)
         mask_count = np.sum(mask)
         q = state["Q"]
-        q[IRHO, mask] = self.model.atmos.nHTot[:mask_count][::-1] * h_mass
+        q[IRHO, mask] = self.model.atmos.nHTot[:mask_count][::-1] * (h_mass * self.mass_per_h)
 
     def update_tracers(self, state, sim_config):
         tracers = state.get("tracers", np.zeros((self.num_tracers, state["xcc"].shape[0])))

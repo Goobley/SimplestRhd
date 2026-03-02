@@ -8,6 +8,7 @@ from .indices import (
     NUM_EQ,
     NUM_GHOST
 )
+from .eos import temperature_si
 import astropy.constants as const
 
 jax.config.update("jax_enable_x64", True)
@@ -15,6 +16,9 @@ M_P = const.m_p.value
 M_E = const.m_e.value
 K_B = const.k_B.value
 
+# NOTE(cmo): Doesn't match the dimensionalised self-similar test from Cherry et
+# al with this set to True. Decide whether to prioritise sharpness or diffusion,
+# I guess. Could try other limiters.
 USE_HARMONIC_MEAN = False
 
 def harmonic_mean(a, b):
@@ -122,19 +126,16 @@ def implicit_thermal_conduction(
     h_mass = sim_config.get("h_mass", M_P)
     kappa0 = sim_config.get("kappa0", 8e-12)
     k_B = sim_config.get("k_B", K_B)
+    mass_per_h = sim_config.get("avg_mass", 1.0)
+    total_abund = sim_config.get("total_abund", 1.0)
 
     saturate_flux = sim_config.get("saturate_conductive_flux", False)
     ne = 0.0
     if saturate_flux:
-        # TODO(cmo): Mass per h term
-        ne = y * Q[IRHO] / h_mass
+        nh = Q[IRHO] / (h_mass * mass_per_h)
+        ne = y * nh
 
-
-    # TODO(cmo): This implicitly assumes fully ionised only H
-    # TODO(cmo): Infer alpha directly, using the temperature function passed
-    # cv = 1.0 / (gamma - 1.0) * k_B / (P_MASS * MEAN_MOLECULAR_MASS)
-    # TODO(cmo): Mass per h term
-    cv = 1.0 / (gamma - 1.0) * k_B / (h_mass) * (1.0 + y)
+    cv = 1.0 / (gamma - 1.0) * k_B / (h_mass * mass_per_h) * (total_abund + y)
     alpha = 1.0 / (Q[IRHO] * cv)
     temperature = Q[IENE] * alpha
 

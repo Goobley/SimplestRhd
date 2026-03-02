@@ -3,7 +3,7 @@ from .indices import (
     IMOM,
     IENE,
     IIONE,
-    k_B
+    K_B
 )
 
 import numpy as np
@@ -20,27 +20,8 @@ def saha_rhs_H(temperature):
 
 def y_from_nhtot(nh_tot, temperature):
     x = saha_rhs_H(temperature)
-    # return 0.5 * (-x + np.sqrt(x**2 + 4.0 * nh_tot * x)) / nh_tot
-
     x /= nh_tot
-    # return 0.5 * x * (np.sqrt(1.0 + 4.0 / x) - 1.0)
     return 0.5 * np.sqrt(x) * (4.0 / (np.sqrt(x + 4) + np.sqrt(x)))
-
-    # y = 0.5
-    # for i in range(100):
-    #     fy = y**2 / (1.0 - y) - x
-    #     fpy = (2 * y * (1.0 - y) + y**2) / (1.0 - y)**2
-    #     prev_y = y
-    #     y = y - 0.1 * (fy / fpy)
-    #     y = np.clip(y, np.nextafter(0.0, 1.0), np.nextafter(1.0, 0.0))
-    #     # print(y)
-    #     # print(fy)
-    #     # print('----')
-    #     if np.max(np.abs((y - prev_y) / prev_y)) < 1e-8:
-    #         break
-    # return y
-
-
 
 def y_from_ntot(n_tot, temperature):
     x = saha_rhs_H(temperature)
@@ -54,7 +35,6 @@ def lte_eos(
         temp_err_bound=1e-3,
         find_initial_ion_e=False,
         verbose=False,
-        total_abund=1.0
     ):
 
     """
@@ -64,14 +44,17 @@ def lte_eos(
     gamma = state["gamma"]
     mass_per_h = sim_config.get("avg_mass", 1.0)
     h_mass = sim_config.get("h_mass", M_P)
+    k_B = sim_config.get("k_B", K_B)
     chi_H = sim_config.get("chi_H", CHI_H)
+    total_abund = sim_config.get("total_abund", 1.0)
+    if total_abund is None:
+        total_abund = lw.DefaultAtomicAbundance.totalAbundance
     Q = state["Q"]
     rho = Q[IRHO]
     mom = Q[IMOM]
     e_tot = Q[IENE]
     # NOTE(cmo): Ignore this term if we're iterating for the initial ion_e to be
     # consistent with a pressure (following a prim_to_cons call).
-    #### THIS DOESN'T WORK. NEED A FUNCTION TO FIND INITIAL ION_E
     inc_ion_e = 1.0 if include_ion_e and not find_initial_ion_e else 0.0
 
     e_kinetic = mom**2 / rho
@@ -115,11 +98,9 @@ def lte_eos(
         print(temp_err)
 
     new_spec_ion_e = y * rho_to_nh_tot * chi_H if include_ion_e else 0.0
-    # new_spec_ion_e = y * rho * rho_to_nh_tot * chi_H if include_ion_e else 0.0
     new_etot = (
         1.0 / (gamma - 1.0) * (total_abund + y) * rho * rho_to_nh_tot * k_B * temperature
         + new_spec_ion_e * rho
-        # + new_spec_ion_e
         + e_kinetic
     )
     Q[IENE, :] = new_etot

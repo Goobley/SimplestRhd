@@ -27,4 +27,4 @@ NUM_EQ = 4
 NUM_GHOST = 3
 
 # Physical constants
-k_B = const.k_B.value
+K_B = const.k_B.value
