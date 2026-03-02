@@ -17,6 +17,7 @@ from .indices import (
     IVEL,
     IPRE,
     SYMMETRIC_BC,
+    PERIODIC_BC,
     REFLECTING_BC,
     FIXED_BC,
     USER_BC,
@@ -98,6 +99,8 @@ def set_bcs(state, sim_config, dt):
     elif bc_modes[0] == REFLECTING_BC:
         Q[:, :NUM_GHOST] = Q[:, NUM_GHOST : 2 * NUM_GHOST][:, ::-1]
         Q[1, :NUM_GHOST] = -Q[1, NUM_GHOST : 2 * NUM_GHOST][::-1]
+    elif bc_modes[0] == PERIODIC_BC:
+        Q[:, :NUM_GHOST] = Q[:, -NUM_GHOST:]
     elif bc_modes[0] == FIXED_BC:
         Q[:, :NUM_GHOST] = fixed_bc[0][:, None]
     elif bc_modes[0] == USER_BC:
@@ -108,6 +111,8 @@ def set_bcs(state, sim_config, dt):
     elif bc_modes[1] == REFLECTING_BC:
         Q[:, -NUM_GHOST:] = Q[:, -2 * NUM_GHOST : -NUM_GHOST][:, ::-1]
         Q[1, -NUM_GHOST:] = -Q[1, -2 * NUM_GHOST : -NUM_GHOST][::-1]
+    elif bc_modes[1] == PERIODIC_BC:
+        Q[:, -NUM_GHOST:] = Q[:, :NUM_GHOST]
     elif bc_modes[1] == FIXED_BC:
         Q[:, -NUM_GHOST:] = fixed_bc[1][:, None]
     elif bc_modes[1] == USER_BC:

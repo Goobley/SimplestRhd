@@ -6,8 +6,9 @@ import astropy.constants as const
 # Boundary condition indices
 SYMMETRIC_BC = 0
 REFLECTING_BC = 1
-FIXED_BC = 2
-USER_BC = 3
+PERIODIC_BC = 2
+FIXED_BC = 3
+USER_BC = 4
 
 # Variable indices - conserved variables (Q)
 IRHO = 0
