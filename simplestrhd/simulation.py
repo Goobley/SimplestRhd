@@ -337,7 +337,7 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
             # Save snapshot if snapshot_dir is provided
             if snapshot_dir is not None:
                 save_snapshot(state, str(snapshot_dir))
-            next_output = current_time + output_cadence
+            next_output = min(current_time + output_cadence, max_time)
 
         if i % 50 == 0 or current_time >= max_time:
             print(f"t: {current_time:.4f} s, dt: {dt:.2e} s, iter: {i:9d}")
@@ -347,7 +347,7 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
 
         dt = compute_dt(state, max_cfl=max_cfl)
 
-        if current_time + dt > next_output:
+        if current_time + dt >= next_output:
             dt = next_output - current_time
             while current_time + dt < next_output:
                 dt = np.nextafter(dt, np.inf)
