@@ -32,6 +32,7 @@ from simplestrhd import (
     temperature_si,
     IENE,
     TownsendThinLoss,
+    SpongeLayer,
 )
 
 def construct_x_grid(x0, x1, num_grid):
@@ -53,7 +54,7 @@ config = dict(
     x_max = 2e6,
     num_grid_points = 1000,
     gamma = 5/3,
-    max_time = 100.0,
+    max_time = 500.0,
     output_cadence = 0.5,
     max_cfl = 0.9,
     base_pressure = 0.023,
@@ -110,13 +111,20 @@ if __name__ == "__main__":
         sources[IENE, NUM_GHOST:-NUM_GHOST] += heating
 
     # Create state dictionary
+    q0 = condensation_ics(grid, gamma=gamma)
     state = {
         "xcc": grid,
         "dx": grid[1] - grid[0],
-        "Q": condensation_ics(grid, gamma=gamma),
+        "Q": q0,
         "sources": [
             TownsendThinLoss("DM"),
-            # background_heating,
+            SpongeLayer(
+                -1.5e6,
+                1.5e6,
+                0.03,
+                6e-6, # Ramp damping to exp(3) over 500 km
+                q0[:, 0].copy(),
+            )
         ],
         "gamma": gamma,
         "time": 0.0,

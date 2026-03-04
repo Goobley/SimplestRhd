@@ -26,7 +26,7 @@ def tracer_eos(state, sim_config, verbose=False):
     Q = state["Q"]
     ne = state["tracers"][0]
 
-    e_kinetic = Q[IMOM]**2 / Q[IRHO]
+    e_kinetic = 0.5 * Q[IMOM]**2 / Q[IRHO]
 
     rho = Q[IRHO]
     rho_to_nh_tot = 1.0 / (h_mass * mass_per_h)

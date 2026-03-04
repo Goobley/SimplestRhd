@@ -292,6 +292,7 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
     """
     conduction_fn = sim_config.get("conduction_fn")
     use_conduction = conduction_fn is not None
+    strang_split_conduction = sim_config.get("strang_split_conduction", False)
 
     # Initialize snapshot directory if provided
     if snapshot_dir is not None:
@@ -317,6 +318,8 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
 
     for i in range(max_steps):
         timestep_info = TimestepInfo(current_time, dt, dt, max_cfl)
+        if strang_split_conduction:
+            conduction_fn(state, sim_config, 0.5 * dt)
         run_step(state, sim_config, timestep_info, state["sources"])
 
         # Apply unsplit source terms once per full timestep
@@ -328,7 +331,8 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
             state["Q"][:, NUM_GHOST : -NUM_GHOST] += unsplit_state_update[:, NUM_GHOST : -NUM_GHOST] * timestep_info.dt
 
         if use_conduction:
-            conduction_fn(state, sim_config, dt)
+            cond_dt = 0.5 * dt if strang_split_conduction else dt
+            conduction_fn(state, sim_config, cond_dt)
             set_bcs(state, sim_config, dt)
 
         current_time += dt

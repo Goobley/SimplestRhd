@@ -10,6 +10,7 @@ from .lw_interface import *
 from .reconstruction import *
 from .riemann_flux import *
 from .simulation import *
+from .sponge_layer import *
 from .thin_loss import *
 from .tracer_eos import *
 from .tracers import *

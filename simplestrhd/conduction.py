@@ -4,8 +4,9 @@ import jax.numpy as jnp
 import optimistix as optx
 from .indices import (
     IRHO,
+    IMOM,
     IENE,
-    NUM_EQ,
+    IIONE,
     NUM_GHOST
 )
 from .eos import temperature_si
@@ -109,7 +110,7 @@ def solve_step(prev_temperature, dx, dt, kappa0, alpha, beta, ne=0.0):
         solver=optx.Newton(
             rtol=1e-5,
             atol=1e-5,
-            linear_solver=lineax.GMRES(rtol=1e-5, atol=1e-5)),
+            linear_solver=lineax.GMRES(rtol=1e-3, atol=1e-3)),
         y0=prev_temperature,
     )
     return sol.value
@@ -137,7 +138,8 @@ def implicit_thermal_conduction(
 
     cv = 1.0 / (gamma - 1.0) * k_B / (h_mass * mass_per_h) * (total_abund + y)
     alpha = 1.0 / (Q[IRHO] * cv)
-    temperature = Q[IENE] * alpha
+    eint = Q[IENE] - (0.5 * Q[IMOM]**2 / Q[IRHO]) - (Q[IRHO] * Q[IIONE])
+    temperature = eint * alpha
 
     new_temperature = solve_step(
         temperature,
@@ -149,4 +151,5 @@ def implicit_thermal_conduction(
         ne=ne,
     )
     delta_E = (new_temperature - temperature) / alpha
+    state['temperature'] = new_temperature
     Q[IENE] += delta_E

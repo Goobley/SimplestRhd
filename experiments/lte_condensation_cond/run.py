@@ -4,7 +4,6 @@ from pathlib import Path
 import astropy.constants as const
 import numpy as np
 import matplotlib.pyplot as plt
-
 try:
     get_ipython().run_line_magic("matplotlib", "")
 except:
@@ -34,6 +33,7 @@ from simplestrhd import (
     IENE,
     TownsendThinLoss,
     SpongeLayer,
+    implicit_thermal_conduction,
 )
 
 def construct_x_grid(x0, x1, num_grid):
@@ -57,7 +57,7 @@ config = dict(
     gamma = 5/3,
     max_time = 500.0,
     output_cadence = 0.5,
-    max_cfl = 0.9,
+    max_cfl = 0.5,
     base_pressure = 0.023,
     base_density = 1e-12,
     blob_density = 5e-11,
@@ -79,10 +79,14 @@ if __name__ == "__main__":
         "reconstruction_fn": reconstruct_ppm,
         "flux_fn": hll_flux,
         "timestepper": "ssprk3",
-        "conduction_fn": None,
+        "conduction_fn": implicit_thermal_conduction,
+        "eos": lte_eos,
         "bc_modes": [SYMMETRIC_BC, SYMMETRIC_BC],
         "fixed_bcs": None,
         "user_bcs": None,
+        "saturate_conductive_flux": False,
+        "strang_split_conduction": False,
+        "run_hydro": True,
     }
 
     def condensation_ics(x, gamma):
@@ -97,7 +101,10 @@ if __name__ == "__main__":
             np.zeros_like(x),
         ])
         w[IRHO, :] += blob_density * np.exp(-x**2 / blob_delta**2)
-        return prim_to_cons(w, gamma=gamma)
+        q = prim_to_cons(w, gamma=gamma)
+        state = dict(xcc=x, Q=q, gamma=gamma)
+        lte_eos(state, {}, temp_err_bound=1e-7, find_initial_ion_e=True)
+        return q, state['y']
 
     def background_heating(state, sim_config, sources, time):
         m_p = const.m_p.value
@@ -108,19 +115,20 @@ if __name__ == "__main__":
         sources[IENE, NUM_GHOST:-NUM_GHOST] += heating
 
     # Create state dictionary
-    q0 = condensation_ics(grid, gamma=gamma)
+    q0, y0 = condensation_ics(grid, gamma=gamma)
     state = {
         "xcc": grid,
         "dx": grid[1] - grid[0],
-        "Q": q0,
+        "Q": q0.copy(),
+        "y": y0.copy(),
         "sources": [
             TownsendThinLoss("DM"),
             SpongeLayer(
                 -1.5e6,
                 1.5e6,
                 0.03,
-                6e-6,
-                q0[:, 0].copy()
+                6e-6, # Ramp damping to exp(3) over 500 km
+                q0[:, 0].copy(),
             )
         ],
         "gamma": gamma,

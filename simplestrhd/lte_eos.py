@@ -57,7 +57,7 @@ def lte_eos(
     # consistent with a pressure (following a prim_to_cons call).
     inc_ion_e = 1.0 if include_ion_e and not find_initial_ion_e else 0.0
 
-    e_kinetic = mom**2 / rho
+    e_kinetic = 0.5 * mom**2 / rho
     e_int_ion = e_tot - e_kinetic
 
     rho_to_nh_tot = 1.0 / (h_mass * mass_per_h)
@@ -106,4 +106,5 @@ def lte_eos(
     Q[IENE, :] = new_etot
     Q[IIONE, :] = new_spec_ion_e
     state['y'] = y
+    # state['lte_temperature'] = temperature
 
