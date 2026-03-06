@@ -234,7 +234,7 @@ def xarray_to_state(ds: xr.Dataset, state_template: Dict[str, Any] = None) -> Di
     Args:
         ds: xarray Dataset from state_to_xarray()
         state_template: Optional template dict with non-serializable fields
-                       (sources, unsplit_sources, bc_modes, etc.)
+                       (sources, split_sources, bc_modes, etc.)
 
     Returns:
         State dictionary ready for simulation

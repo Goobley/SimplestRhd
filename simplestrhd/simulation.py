@@ -276,7 +276,7 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
     """Run the simulation.
 
     Args:
-        state: State dictionary with initial conditions, gamma, sources, unsplit_sources, time
+        state: State dictionary with initial conditions, gamma, sources, split_sources, time
         sim_config: Simulation config dict with reconstruction_fn, flux_fn, conduction_fn,
                    bc_modes, fixed_bcs, user_bcs
         max_time: Maximum simulation time
@@ -322,13 +322,13 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
             conduction_fn(state, sim_config, 0.5 * dt)
         run_step(state, sim_config, timestep_info, state["sources"])
 
-        # Apply unsplit source terms once per full timestep
-        unsplit_sources = state.get("unsplit_sources", [])
-        if unsplit_sources:
-            unsplit_state_update = np.zeros_like(state["Q"])
-            for s in unsplit_sources:
-                s(state, sim_config, unsplit_state_update, timestep_info)
-            state["Q"][:, NUM_GHOST : -NUM_GHOST] += unsplit_state_update[:, NUM_GHOST : -NUM_GHOST] * timestep_info.dt
+        # Apply split source terms once per full timestep
+        split_sources = state.get("split_sources", [])
+        if split_sources:
+            split_state_update = np.zeros_like(state["Q"])
+            for s in split_sources:
+                s(state, sim_config, split_state_update, timestep_info)
+            state["Q"][:, NUM_GHOST : -NUM_GHOST] += split_state_update[:, NUM_GHOST : -NUM_GHOST] * timestep_info.dt
 
         if use_conduction:
             cond_dt = 0.5 * dt if strang_split_conduction else dt

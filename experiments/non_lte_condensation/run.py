@@ -35,6 +35,7 @@ from simplestrhd import (
     TownsendThinLoss,
     PwInterface,
     tracer_eos,
+    SpongeLayer
 )
 from h_model import H_6_cooling_collisions
 import lightweaver as lw
@@ -63,13 +64,13 @@ atomic_models_condensation = [
 active_atoms_condensation = ["H"]
 
 config = dict(
-    x_min = -2e6,
-    x_max = 2e6,
-    num_grid_points = 1000,
+    x_min = -3e6,
+    x_max = 3e6,
+    num_grid_points = 1501,
     gamma = 5/3,
-    max_time = 0.1,
+    max_time = 500.0,
     output_cadence = 0.5,
-    max_cfl = 0.9,
+    max_cfl = 0.6,
     base_pressure = 0.023,
     base_density = 1e-12,
     blob_density = 5e-11,
@@ -79,7 +80,7 @@ config = dict(
 PrdBoundary = False
 LymanContTembri = True
 BackgroundParams = dict(
-    temperature=1e6,
+    temperature=2e6,
     vlos=0.0,
     vturb=2e3,
     pressure=config["base_pressure"],
@@ -145,12 +146,14 @@ if __name__ == "__main__":
         "flux_fn": hll_flux,
         "timestepper": "ssprk3",
         "conduction_fn": None,
-        "eos": partial(tracer_eos, total_abund=None),
-        # TODO(cmo): This is a bit of a hack
-        "h_mass": const.m_p.value * lw.DefaultAtomicAbundance.totalAbundance,
+        "eos": tracer_eos,
+        "h_mass": const.m_p.value,
+        "avg_mass": lw.DefaultAtomicAbundance.massPerH,
+        "total_abund": lw.DefaultAtomicAbundance.totalAbundance,
         "bc_modes": [SYMMETRIC_BC, SYMMETRIC_BC],
         "fixed_bcs": None,
         "user_bcs": None,
+        "min_temperature": 2e3,
     }
 
     def condensation_ics(x, gamma):
@@ -175,26 +178,34 @@ if __name__ == "__main__":
             atomic_models=atomic_models_condensation,
             background_params=BackgroundParams,
             threshold_temperature=ThresholdTemperature,
-            stat_eq=True,
-            total_abund=None,
+            stat_eq=False,
             num_rays=3,
             bc_type=pw.UniformJPromBc,
+            quiet=True,
         )
         pw_interface.update_initial_density_profile(state, sim_config)
         pw_interface.set_initial_tracers(state, sim_config)
         pw_interface.update_tracers(state, sim_config)
+        tracer_eos(state, sim_config)
 
-        return q, state.get("tracers"), pw_interface
+        return state, pw_interface
 
-    q, tracers, pw_interface = condensation_ics(grid, gamma)
+    initial_state, pw_interface = condensation_ics(grid, gamma)
 
     # Create state dictionary
-    state = {
+    state = initial_state | {
         "xcc": grid,
         "dx": grid[1] - grid[0],
-        "Q": q,
-        "tracers": tracers,
         "sources": [
+            SpongeLayer(
+                config["x_min"] + 0.5e6,
+                config["x_max"] - 0.5e6,
+                0.03,
+                6e-6, # Ramp damping to exp(3) over 500 km
+                initial_state["Q"][:, 0].copy(),
+            ),
+        ],
+        "split_sources": [
             pw_interface,
         ],
         "gamma": gamma,
