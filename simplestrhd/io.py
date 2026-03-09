@@ -40,6 +40,19 @@ VARIABLE_REGISTRY = {
         "dims": ["x"],
         "description": "Cell center coordinates",
     },
+    # Outgoing intensity
+    "intensity": {
+        "dims": ["wavelength", "mu"],
+        "description": "Outgoing intensity"
+    },
+    "wavelength": {
+        "dims": ["wavelength"],
+        "description": "Wavelength grid"
+    }
+}
+VARIABLE_COORD_NAMES = {
+    "xcc": "x",
+    "wavelength": "wavelength"
 }
 
 # Scalar fields that should be stored as attributes, not DataArrays
@@ -191,13 +204,14 @@ def state_to_xarray(state: Dict[str, Any]) -> xr.Dataset:
 
     # Create coordinate variables
     coords = {}
-    if "xcc" in array_fields:
-        coords["x"] = ("x", array_fields["xcc"])
+    for field_name in VARIABLE_COORD_NAMES:
+        if field_name in array_fields:
+            coords[VARIABLE_COORD_NAMES[field_name]] = (VARIABLE_COORD_NAMES[field_name], array_fields[field_name])
 
     # Create data variables from array fields
     data_vars = {}
     for field_name, data in array_fields.items():
-        if field_name == "xcc":
+        if field_name in VARIABLE_COORD_NAMES:
             continue  # Already handled as coordinate
 
         info = VARIABLE_REGISTRY[field_name]
@@ -244,11 +258,12 @@ def xarray_to_state(ds: xr.Dataset, state_template: Dict[str, Any] = None) -> Di
     """
     state = {}
 
-    # Extract coordinate (xcc)
-    if "x" in ds.coords:
-        state["xcc"] = ds.coords["x"].values
-    else:
+    if "x" not in ds.coords:
         raise ValueError("Dataset missing 'x' coordinate (xcc)")
+
+    for field_name in VARIABLE_COORD_NAMES:
+        if VARIABLE_COORD_NAMES[field_name] in ds.coords:
+            state[field_name] = ds.coords[VARIABLE_COORD_NAMES[field_name]].values
 
     # Extract scalar fields from attributes
     for field_name in SCALAR_FIELDS:
@@ -265,7 +280,7 @@ def xarray_to_state(ds: xr.Dataset, state_template: Dict[str, Any] = None) -> Di
 
     # Extract array fields from data variables
     for field_name in VARIABLE_REGISTRY:
-        if field_name in ds.data_vars:
+        if field_name in ds.data_vars and field_name not in VARIABLE_COORD_NAMES:
             state[field_name] = ds[field_name].values
 
     # Merge template fields (non-serializable)

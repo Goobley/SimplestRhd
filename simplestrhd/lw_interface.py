@@ -37,6 +37,7 @@ class PwInterface:
             quiet=False,
             evaluate_radiative_losses=True,
             add_edge_wavelengths=None,
+            add_vertical_ray=True,
         ):
         self.threshold_temperature = threshold_temperature
         self.background_params = background_params
@@ -65,6 +66,7 @@ class PwInterface:
         self.evaluate_radiative_losses = evaluate_radiative_losses
         if add_edge_wavelengths:
             self.extra_wavelengths = self.compute_extra_wavelengths()
+        self.add_vertical_ray = add_vertical_ray
 
         self.prom_bc = prom_bc
         self.context_length = 0
@@ -76,6 +78,8 @@ class PwInterface:
             self.model.conserve_pressure = False
 
         self.num_tracers = 1 + sum(self.model.eq_pops[a].shape[0] for a in self.active_atoms)
+        state['wavelength'] = self.model.ctx.spect.wavelength.copy()
+        state['intensity'] = self.model.ctx.spect.I[:, -1][:, None].copy()
 
     def compute_extra_wavelengths(self):
         rad_set = lw.RadiativeSet(atoms=self.atomic_models)
@@ -135,6 +139,7 @@ class PwInterface:
             conserve_charge=True,
             conserve_pressure=conserve_pressure,
             extra_wavelengths=self.extra_wavelengths,
+            add_vertical_ray=self.add_vertical_ray,
         )
         self.model.ctx.depthData.fill = True
         self.hz_edges = (lw.compute_wavelength_edges(self.model.ctx) << u.nm).to(u.Hz, equivalencies=u.spectral()).value
@@ -144,14 +149,14 @@ class PwInterface:
         """Update the atmosphere from the state"""
         mask = self.mask_region(state, sim_config)
         mask_count = np.sum(mask)
-        if mask_count > self.context_length:
+        if mask_count + 2 > self.context_length:
             self.create_new_context(
                 min(
                     self.growth_factor * self.context_length,
                     state['xcc'].shape[0]
                 )
             )
-        elif mask_count < self.shrink_threshold * self.context_length:
+        elif mask_count + 2 < self.shrink_threshold * self.context_length:
             self.create_new_context(self.shrink_factor * self.context_length)
 
         y = state.get("y", 1.0)
@@ -177,7 +182,7 @@ class PwInterface:
 
         atmos = self.model.atmos
         z_full = atmos.z
-        z_full[:mask_count] = z[::-1]
+        z_full[1:mask_count+1] = z[::-1]
         dx = state["xcc"][1] - state["xcc"][0]
         for i in range(mask_count, self.context_length):
             z_full[i] = z_full[i-1] - dx
@@ -271,6 +276,7 @@ class PwInterface:
         )
 
         tracers = state.get("tracers", np.zeros((self.num_tracers, state["xcc"].shape[0])))
+        tracer_energy = state.get("tracer_energy", np.zeros(self.num_tracers))
         tracers[0, :] = ne
         start_idx = 1
         for a in self.active_atoms:
@@ -281,8 +287,11 @@ class PwInterface:
                 nh_tot * lw.DefaultAtomicAbundance[a]
             )
             tracers[start_idx:start_idx + pops.shape[0], :] = pops
+            for l in range(pops.shape[0]):
+                tracer_energy[start_idx + l] = self.model.rad_set[a].levels[l].E_SI
             start_idx += pops.shape[0]
         state["tracers"] = tracers
+        state["tracer_energy"] = tracer_energy
 
     def update_initial_density_profile(self, state, sim_config):
         h_mass = sim_config.get('h_mass', M_P)
@@ -293,7 +302,6 @@ class PwInterface:
 
     def update_tracers(self, state, sim_config):
         tracers = state.get("tracers", np.zeros((self.num_tracers, state["xcc"].shape[0])))
-        tracer_energy = state.get("tracer_energy", np.zeros(self.num_tracers))
         mask = self.mask_region(state, sim_config)
         mask_count = np.sum(mask)
         tracers[0, mask] = self.model.atmos.ne[:mask_count][::-1]
@@ -301,11 +309,8 @@ class PwInterface:
         for a in self.active_atoms:
             pops = self.model.eq_pops[a]
             tracers[start_idx:start_idx + pops.shape[0], mask] = pops[:, :mask_count][:, ::-1]
-            for l in range(pops.shape[0]):
-                tracer_energy[start_idx + l] = self.model.rad_set[a].levels[l].E_SI
             start_idx += pops.shape[0]
         state["tracers"] = tracers
-        state["tracer_energy"] = tracer_energy
 
     def fill_from_tracers(self, state, sim_config):
         tracers = state["tracers"]
@@ -329,6 +334,7 @@ class PwInterface:
         if "tracers" in state:
             self.fill_from_tracers(state, sim_config)
         self.solve_rt(dt=ts.dt)
+        state['intensity'] = self.model.ctx.spect.I[:, -1][:, None].copy()
         if "tracers" in state:
             self.update_tracers(state, sim_config)
         # TODO(cmo): Evaluate losses at start of step and time-average with end-state?
