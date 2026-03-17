@@ -19,5 +19,11 @@ def H_6_cooling_collisions():
         else:
             raise ValueError("Unexpected rate on H model")
         coll.rates = rate
+    H6.lines[0].quadrature.Nlambda = 51
+    H6.lines[1].quadrature.Nlambda = 51
+    H6.lines[2].quadrature.Nlambda = 51
+    H6.lines[4].quadrature.Nlambda = 51
+    H6.lines[5].quadrature.Nlambda = 51
+    H6.lines[7].quadrature.Nlambda = 51
     lw.reconfigure_atom(H6)
     return H6

@@ -48,7 +48,15 @@ VARIABLE_REGISTRY = {
     "wavelength": {
         "dims": ["wavelength"],
         "description": "Wavelength grid"
-    }
+    },
+    "rad_loss": {
+        "dims": ["x"],
+        "description": "radiative loss per cell"
+    },
+    "full_rad_loss": {
+        "dims": ["wavelength", "x"],
+        "description": "radiative loss per cell at each wavelength"
+    },
 }
 VARIABLE_COORD_NAMES = {
     "xcc": "x",

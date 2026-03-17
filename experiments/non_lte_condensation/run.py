@@ -13,6 +13,8 @@ except:
 # Add parent directory to path so we can import simplestrhd
 sys.path.insert(0, str(Path(__file__).absolute().parent.parent.parent))
 
+# TODO(cmo): Look at setting up a finite volume like pievewise constant solver from the cell centre values, or interpolating somehow.
+
 from simplestrhd import (
     run_sim,
     cons_to_prim,
@@ -64,13 +66,13 @@ atomic_models_condensation = [
 active_atoms_condensation = ["H"]
 
 config = dict(
-    x_min = -3e6,
-    x_max = 3e6,
-    num_grid_points = 3001,
+    x_min = -2.2e6,
+    x_max = 2.2e6,
+    num_grid_points = 5000,
     gamma = 5/3,
     max_time = 500.0,
     output_cadence = 0.5,
-    max_cfl = 0.6,
+    max_cfl = 0.5,
     base_pressure = 0.023,
     base_density = 1e-12,
     blob_density = 5e-11,
@@ -87,7 +89,7 @@ BackgroundParams = dict(
     nh_tot=config["base_density"] / (const.m_p.value * lw.DefaultAtomicAbundance.totalAbundance),
     ne=config["base_density"] / (const.m_p.value * lw.DefaultAtomicAbundance.totalAbundance),
 )
-ThresholdTemperature = 200e3
+ThresholdTemperature = 150e3
 
 def construct_bc_table():
     print("Constructing BC Table...")
@@ -147,13 +149,14 @@ if __name__ == "__main__":
         "timestepper": "ssprk3",
         "conduction_fn": None,
         "eos": tracer_eos,
+        # "eos": lte_eos,
         "h_mass": const.m_p.value,
         "avg_mass": lw.DefaultAtomicAbundance.massPerH,
         "total_abund": lw.DefaultAtomicAbundance.totalAbundance,
         "bc_modes": [SYMMETRIC_BC, SYMMETRIC_BC],
         "fixed_bcs": None,
         "user_bcs": None,
-        "min_temperature": 2e3,
+        "min_temperature": 2.5e3,
     }
 
     def condensation_ics(x, gamma):
@@ -179,9 +182,15 @@ if __name__ == "__main__":
             background_params=BackgroundParams,
             threshold_temperature=ThresholdTemperature,
             stat_eq=False,
-            num_rays=3,
+            num_rays=5,
             bc_type=pw.UniformJPromBc,
-            quiet=True,
+            quiet=False,
+            buffer_cells=3,
+            shrink_threshold=0.85,
+            shrink_factor=0.9,
+            growth_factor=1.15,
+            evaluate_radiative_losses=True,
+            pop_tol=4e-4,
         )
         pw_interface.update_initial_density_profile(state, sim_config)
         pw_interface.set_initial_tracers(state, sim_config)
@@ -204,6 +213,7 @@ if __name__ == "__main__":
                 6e-6, # Ramp damping to exp(3) over 500 km
                 initial_state["Q"][:, 0].copy(),
             ),
+            # TownsendThinLoss(),
         ],
         "split_sources": [
             pw_interface,

@@ -38,6 +38,9 @@ class PwInterface:
             evaluate_radiative_losses=True,
             add_edge_wavelengths=None,
             add_vertical_ray=True,
+            buffer_cells=1,
+            dump_full_rad_loss=False,
+            pop_tol=1e-3,
         ):
         self.threshold_temperature = threshold_temperature
         self.background_params = background_params
@@ -49,6 +52,9 @@ class PwInterface:
         self.bc_type = bc_type
         self.stat_eq = stat_eq
         self.quiet = quiet
+        self.buffer_cells = buffer_cells
+        self.dump_full_rad_loss = dump_full_rad_loss
+        self.pop_tol = pop_tol
 
         total_abund = sim_config.get("total_abund", 1.0)
         if total_abund is None:
@@ -64,6 +70,7 @@ class PwInterface:
         if add_edge_wavelengths is None:
             add_edge_wavelengths = evaluate_radiative_losses
         self.evaluate_radiative_losses = evaluate_radiative_losses
+        self.extra_wavelengths = None
         if add_edge_wavelengths:
             self.extra_wavelengths = self.compute_extra_wavelengths()
         self.add_vertical_ray = add_vertical_ray
@@ -71,9 +78,9 @@ class PwInterface:
         self.prom_bc = prom_bc
         self.context_length = 0
         mask = self.mask_region(state, sim_config)
-        self.create_new_context(np.sum(mask) * growth_factor, conserve_pressure=initial_conserve_pressure)
+        self.create_new_context((np.sum(mask) + 2 * self.buffer_cells) * growth_factor, conserve_pressure=initial_conserve_pressure)
         self.update_atmos(state, sim_config)
-        self.model.iterate_se()
+        self.model.iterate_se(popsTol=self.pop_tol)
         if initial_conserve_pressure:
             self.model.conserve_pressure = False
 
@@ -135,7 +142,8 @@ class PwInterface:
             Nthreads=self.num_threads,
             Nrays=self.num_rays,
             BcType=self.bc_type,
-            ctx_kwargs=dict(formalSolver="piecewise_linear_1d"),
+            # ctx_kwargs=dict(formalSolver="piecewise_linear_1d"),
+            # ctx_kwargs=dict(formalSolver="piecewise_besser_1d"),
             conserve_charge=True,
             conserve_pressure=conserve_pressure,
             extra_wavelengths=self.extra_wavelengths,
@@ -149,14 +157,14 @@ class PwInterface:
         """Update the atmosphere from the state"""
         mask = self.mask_region(state, sim_config)
         mask_count = np.sum(mask)
-        if mask_count + 2 > self.context_length:
+        if mask_count + 2 * self.buffer_cells > self.context_length:
             self.create_new_context(
                 min(
                     self.growth_factor * self.context_length,
                     state['xcc'].shape[0]
                 )
             )
-        elif mask_count + 2 < self.shrink_threshold * self.context_length:
+        elif mask_count + 2 * self.buffer_cells < self.shrink_threshold * self.context_length:
             self.create_new_context(self.shrink_factor * self.context_length)
 
         y = state.get("y", 1.0)
@@ -180,11 +188,14 @@ class PwInterface:
         nh_tot = nh_tot[mask]
         ne = ne[mask]
 
+        bc = self.buffer_cells
         atmos = self.model.atmos
         z_full = atmos.z
-        z_full[1:mask_count+1] = z[::-1]
+        z_full[bc:mask_count+bc] = z[::-1]
         dx = state["xcc"][1] - state["xcc"][0]
-        for i in range(mask_count, self.context_length):
+        for i in range(bc - 1, -1, -1):
+            z_full[i] = z_full[i+1] + dx
+        for i in range(mask_count + bc, self.context_length):
             z_full[i] = z_full[i-1] - dx
 
         temperature_full = atmos.temperature
@@ -193,35 +204,60 @@ class PwInterface:
         ne_full = atmos.ne
         pressure_full = self.model.pressure
 
-        temperature_full[:mask_count] = temperature[::-1]
-        vlos_full[:mask_count] = vlos[::-1]
-        nh_tot_full[:mask_count] = nh_tot[::-1]
-        ne_full[:mask_count] = ne[::-1]
-        pressure_full[:mask_count] = pressure[::-1]
+        temperature_full[:] = self.background_params["temperature"]
+        vlos_full[:] = self.background_params["vlos"]
+        pressure_full[:] = self.background_params["pressure"]
+        nh_tot_full[:] = self.background_params["nh_tot"]
+        ne_full[:] = self.background_params["ne"]
 
-        temperature_full[mask_count:] = self.background_params["temperature"]
-        vlos_full[mask_count:] = self.background_params["vlos"]
-        pressure_full[mask_count:] = self.background_params["pressure"]
-        nh_tot_full[mask_count:] = self.background_params["nh_tot"]
-        ne_full[mask_count:] = self.background_params["ne"]
+        temperature_full[bc:mask_count+bc] = temperature[::-1]
+        vlos_full[bc:mask_count+bc] = vlos[::-1]
+        nh_tot_full[bc:mask_count+bc] = nh_tot[::-1]
+        ne_full[bc:mask_count+bc] = ne[::-1]
+        pressure_full[bc:mask_count+bc] = pressure[::-1]
+
+        temperature_full[mask_count+bc:] = self.background_params["temperature"]
+        vlos_full[mask_count+bc:] = self.background_params["vlos"]
+        pressure_full[mask_count+bc:] = self.background_params["pressure"]
+        nh_tot_full[mask_count+bc:] = self.background_params["nh_tot"]
+        ne_full[mask_count+bc:] = self.background_params["ne"]
+
+        # NOTE(cmo): Update the outer regions to use LTE populations (remove
+        # time-dependence due to reshuffling of points around context for those
+        # above threshold temperature).
+        for a in self.active_atoms:
+            pops = lw.lte_pops(
+                self.model.rad_set[a],
+                temperature_full,
+                ne_full,
+                nh_tot_full * lw.DefaultAtomicAbundance[a]
+            )
+            self.model.eq_pops[a][:, :bc] = pops[:, :bc]
+            self.model.eq_pops[a][:, mask_count+bc:] = pops[:, mask_count+bc:]
         self.model.ctx.update_deps()
 
     def solve_rt(self, dt=None):
         if self.stat_eq or dt is None:
-            self.model.iterate_se(quiet=self.quiet, Nscatter=1)
+            self.model.iterate_se(quiet=self.quiet, Nscatter=1, popsTol=self.pop_tol)
         else:
             prev_state = None
-            for i in range(100):
+            for i in range(2000):
                 ctx = self.model.ctx
-                ctx.formal_sol_gamma_matrices()
+                ctx.formal_sol_gamma_matrices(lambdaIterate=i<1)
                 pops_update, prev_state = ctx.time_dep_update(dt, prev_state)
                 nr_update = ctx.nr_post_update(timeDependentData=dict(dt=dt, nPrev=prev_state))
-                if not self.quiet:
-                    print(f"-- Iteration {i}")
+                if not self.quiet and i > 50:
                     print(nr_update.compact_representation())
                     print('-' * 80)
-                if i > 0 and pops_update.dPopsMax < 1e-3 and nr_update.dPopsMax < 1e-3:
+                # NOTE(cmo): Only need to check nr_update as changes have not
+                # been "committed" to the Ng state since before the start of the
+                # time-dep update
+                if i > 0 and nr_update.dPopsMax < self.pop_tol:
+                    if not self.quiet and i > 50:
+                        print('-- Done')
                     break
+            else:
+                breakpoint()
 
     def compute_rad_loss(self):
         ctx = self.model.ctx
@@ -297,18 +333,20 @@ class PwInterface:
         h_mass = sim_config.get('h_mass', M_P)
         mask = self.mask_region(state, sim_config)
         mask_count = np.sum(mask)
+        bc = self.buffer_cells
         q = state["Q"]
-        q[IRHO, mask] = self.model.atmos.nHTot[:mask_count][::-1] * (h_mass * self.mass_per_h)
+        q[IRHO, mask] = self.model.atmos.nHTot[bc:mask_count+bc][::-1] * (h_mass * self.mass_per_h)
 
     def update_tracers(self, state, sim_config):
         tracers = state.get("tracers", np.zeros((self.num_tracers, state["xcc"].shape[0])))
         mask = self.mask_region(state, sim_config)
         mask_count = np.sum(mask)
-        tracers[0, mask] = self.model.atmos.ne[:mask_count][::-1]
+        bc = self.buffer_cells
+        tracers[0, mask] = self.model.atmos.ne[bc:mask_count+bc][::-1]
         start_idx = 1
         for a in self.active_atoms:
             pops = self.model.eq_pops[a]
-            tracers[start_idx:start_idx + pops.shape[0], mask] = pops[:, :mask_count][:, ::-1]
+            tracers[start_idx:start_idx + pops.shape[0], mask] = pops[:, bc:mask_count+bc][:, ::-1]
             start_idx += pops.shape[0]
         state["tracers"] = tracers
 
@@ -316,18 +354,23 @@ class PwInterface:
         tracers = state["tracers"]
         mask = self.mask_region(state, sim_config)
         mask_count = np.sum(mask)
+        bc = self.buffer_cells
         # TODO(cmo): Check consistency between the two n_e's. Our EOS needs to
         # be responsible for aligning them
         ne = tracers[0, mask]
-        self.model.atmos.ne[:mask_count] = ne[::-1]
+        self.model.atmos.ne[bc:mask_count+bc] = ne[::-1]
         start_idx = 1
         for a in self.active_atoms:
             num_level = self.model.eq_pops[a].shape[0]
             pops = tracers[start_idx:start_idx+num_level, mask]
-            self.model.eq_pops[a][:, :mask_count] = pops[:, ::-1]
+            self.model.eq_pops[a][:, bc:mask_count+bc] = pops[:, ::-1]
             start_idx += num_level
 
-        self.model.atmos.nHTot[:] = self.model.eq_pops["H"].sum(axis=0)
+        nh_tot_from_mass = self.model.atmos.nHTot
+        nh_tot_from_n = self.model.eq_pops["H"].sum(axis=0)
+        ratio = nh_tot_from_mass / nh_tot_from_n
+        self.model.eq_pops["H"][...] *= ratio
+        self.model.atmos.ne[...] *= ratio
 
     def __call__(self, state, sim_config, sources, ts):
         self.update_atmos(state, sim_config)
@@ -341,7 +384,17 @@ class PwInterface:
         if self.evaluate_radiative_losses:
             mask = self.mask_region(state, sim_config)
             mask_count = np.sum(mask)
+            bc = self.buffer_cells
 
             rad_loss = self.compute_rad_loss()
-            gain_minus_loss = -np.sum(rad_loss[:, :mask_count], axis=0)[::-1]
+            gain_minus_loss = -np.sum(rad_loss[:, bc:mask_count+bc], axis=0)[::-1]
+            if not self.dump_full_rad_loss:
+                rad_loss = np.zeros(sources.shape[1])
+                rad_loss[mask] = gain_minus_loss
+                state["rad_loss"] = rad_loss
+            else:
+                rad_loss_full = np.zeros((rad_loss.shape[0], sources.shape[1]))
+                rad_loss_full[:, mask] = rad_loss[:, bc:mask_count+1][:, ::-1]
+                state["full_rad_loss"] = rad_loss_full
+
             sources[IENE, mask] += gain_minus_loss
