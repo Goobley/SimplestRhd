@@ -57,7 +57,7 @@ config = dict(
     gamma = 5/3,
     max_time = 500.0,
     output_cadence = 0.5,
-    max_cfl = 0.5,
+    max_cfl = 0.2,
     base_pressure = 0.023,
     base_density = 1e-12,
     blob_density = 5e-11,
@@ -85,7 +85,7 @@ if __name__ == "__main__":
         "fixed_bcs": None,
         "user_bcs": None,
         "saturate_conductive_flux": False,
-        "strang_split_conduction": False,
+        "strang_split_conduction": True,
         "run_hydro": True,
     }
 

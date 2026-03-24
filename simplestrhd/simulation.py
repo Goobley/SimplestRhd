@@ -293,6 +293,7 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
     conduction_fn = sim_config.get("conduction_fn")
     use_conduction = conduction_fn is not None
     strang_split_conduction = sim_config.get("strang_split_conduction", False)
+    sim_config["max_cfl"] = max_cfl
 
     # Initialize snapshot directory if provided
     if snapshot_dir is not None:

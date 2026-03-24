@@ -24,6 +24,7 @@ from simplestrhd import (
     IPRE,
     IIONE,
     NUM_GHOST,
+    reconstruct_plm,
     reconstruct_ppm,
     rusanov_flux,
     hll_flux,
@@ -68,11 +69,11 @@ active_atoms_condensation = ["H"]
 config = dict(
     x_min = -2.2e6,
     x_max = 2.2e6,
-    num_grid_points = 5000,
+    num_grid_points = 1500,
     gamma = 5/3,
     max_time = 500.0,
     output_cadence = 0.5,
-    max_cfl = 0.5,
+    max_cfl = 0.8,
     base_pressure = 0.023,
     base_density = 1e-12,
     blob_density = 5e-11,
@@ -144,7 +145,7 @@ if __name__ == "__main__":
 
     # Create simulation config
     sim_config = {
-        "reconstruction_fn": reconstruct_ppm,
+        "reconstruction_fn": reconstruct_plm,
         "flux_fn": hll_flux,
         "timestepper": "ssprk3",
         "conduction_fn": None,

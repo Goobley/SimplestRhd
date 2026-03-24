@@ -2,6 +2,7 @@
 
 # Import everything from all modules to maintain backward compatibility
 from .conduction import *
+from .hyperbolic_conduction import *
 from .eos import *
 from .indices import *
 from .io import *

@@ -71,10 +71,12 @@ log_lambda_simple = np.array([
 ]) - 13.0
 
 class TownsendThinLoss:
-    def __init__(self, name: str="DM"):
+    def __init__(self, name: str="DM", min_temperature=None):
         valid_names = ["DM", "simple"]
         if name not in valid_names:
             raise ValueError(f"Got cooling curve {name}, not in {valid_names}")
+
+        self.min_temperature = min_temperature
 
         self.name = name
         if name == "DM":
@@ -127,6 +129,8 @@ class TownsendThinLoss:
             total_abund=total_abund,
             k_B=k_B
         )
+        if self.min_temperature is not None:
+            ignore_mask = temperature < self.min_temperature
 
         lambdas = self.lambdas
         temps = self.temps
@@ -156,8 +160,19 @@ class TownsendThinLoss:
             1.0 - (1.0 - townsend_alpha_k[idx]) * (lambdas[idx] / lambdas[-1]) * (temps[-1] / temps[idx]) * (tef_adj - townsend_Y_k[idx])
             ) ** (1.0/(1.0 - townsend_alpha_k[idx]))
 
+        if self.min_temperature:
+            new_temperature[~ignore_mask] = np.maximum(new_temperature[~ignore_mask], self.min_temperature)
         delta_t = new_temperature - temperature
+        if self.min_temperature:
+            delta_t[ignore_mask] = 0.0
         delta_e = 1.0 / (gamma - 1.0) * (nh_tot + ne) * const.k_B.value * delta_t
+
+        Tc = sim_config.get("conduction_suppression_Tc", 0.0)
+        Tlow = sim_config.get("conduction_suppression_Tlow", 0.0)
+        if Tc > 0.0:
+            correction = np.where((temperature <= Tc) & (temperature > Tlow), (temperature / Tc)**2.5, 1.0)
+            delta_e *= correction
+
         sources[IENE, NUM_GHOST:-NUM_GHOST] += delta_e[NUM_GHOST:-NUM_GHOST] / ts.dt_sub
 
 def rad_loss_dm(state, sim_config, sources, time):

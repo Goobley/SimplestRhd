@@ -15,12 +15,12 @@ from simplestrhd import (
     IPRE,
     IIONE,
     NUM_GHOST,
-    reconstruct_ppm,
+    reconstruct_plm,
     rusanov_flux,
     hll_flux,
     load_latest_snapshot,
     load_snapshot,
-    implicit_thermal_conduction,
+    hyperbolic_thermal_conduction,
 )
 from setup import *
 try:
@@ -55,10 +55,10 @@ if __name__ == "__main__":
 
     # Create simulation config
     sim_config = {
-        "reconstruction_fn": reconstruct_ppm,
+        "reconstruction_fn": reconstruct_plm,
         "flux_fn": hll_flux,
-        "timestepper": "rk2",
-        "conduction_fn": implicit_thermal_conduction,
+        "timestepper": "ssprk3",
+        "conduction_fn": None,
         "bc_modes": conduction_bcs(),
         "fixed_bcs": None,
         "user_bcs": [],
@@ -67,6 +67,9 @@ if __name__ == "__main__":
         "h_mass": config["h_mass"],
         "k_B": config["k_B"],
         "saturate_conductive_flux": config["saturate_flux"],
+        "htc_hyperdiffusion": config["htc_hyperdiff"],
+        "htc_despike_strength": config["htc_despike"],
+        "htc_order": config["htc_order"],
     }
 
     # Create state dictionary
@@ -74,7 +77,8 @@ if __name__ == "__main__":
         "xcc": grid,
         "dx": grid[1] - grid[0],
         "Q": conduction_ics(grid, gamma=gamma),
-        "sources": [],
+        "sources": [hyperbolic_thermal_conduction],
+        "split_sources": [],
         "gamma": gamma,
         "time": 0.0,
         "snap_num": 0,
@@ -89,4 +93,5 @@ if __name__ == "__main__":
         max_time=config["max_time"],
         output_cadence=config["output_cadence"],
         max_cfl=config["max_cfl"],
+        # max_steps=200,
     )

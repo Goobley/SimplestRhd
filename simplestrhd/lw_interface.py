@@ -2,18 +2,24 @@ import numpy as np
 import astropy.constants as const
 import astropy.units as u
 import lightweaver as lw
+import lightweaver.LwCompiled as lw_cpp
 import promweaver as pw
+from pathlib import Path
 
 from .indices import (
     IRHO,
     IVEL,
     IPRE,
     IENE,
+    IIONE,
     NUM_GHOST,
 )
 from .eos import temperature_si, cons_to_prim
 
 M_P = const.m_p.value
+
+FS_LIB = Path(__file__).absolute().parent.parent / "fvm_formalsolver" / "build" / "libpragmatic_fvm_fs_1st_1d.so"
+lw_cpp.FormalSolvers.load_fs_from_path(str(FS_LIB))
 
 class PwInterface:
     def __init__(
@@ -41,6 +47,7 @@ class PwInterface:
             buffer_cells=1,
             dump_full_rad_loss=False,
             pop_tol=1e-3,
+            min_size=30,
         ):
         self.threshold_temperature = threshold_temperature
         self.background_params = background_params
@@ -55,6 +62,7 @@ class PwInterface:
         self.buffer_cells = buffer_cells
         self.dump_full_rad_loss = dump_full_rad_loss
         self.pop_tol = pop_tol
+        self.min_size = min_size
 
         total_abund = sim_config.get("total_abund", 1.0)
         if total_abund is None:
@@ -144,6 +152,7 @@ class PwInterface:
             BcType=self.bc_type,
             # ctx_kwargs=dict(formalSolver="piecewise_linear_1d"),
             # ctx_kwargs=dict(formalSolver="piecewise_besser_1d"),
+            ctx_kwargs=dict(formalSolver="pragmatic_1_fvm_1d"),
             conserve_charge=True,
             conserve_pressure=conserve_pressure,
             extra_wavelengths=self.extra_wavelengths,
@@ -160,12 +169,22 @@ class PwInterface:
         if mask_count + 2 * self.buffer_cells > self.context_length:
             self.create_new_context(
                 min(
-                    self.growth_factor * self.context_length,
+                    max(
+                        self.growth_factor * self.context_length,
+                        mask_count + 2 * self.buffer_cells,
+                        self.min_size,
+                    ),
                     state['xcc'].shape[0]
                 )
             )
         elif mask_count + 2 * self.buffer_cells < self.shrink_threshold * self.context_length:
-            self.create_new_context(self.shrink_factor * self.context_length)
+            if self.context_length > self.min_size:
+                self.create_new_context(
+                    max(
+                        self.shrink_factor * self.context_length,
+                        self.min_size,
+                    )
+                )
 
         y = state.get("y", 1.0)
         h_mass = sim_config.get('h_mass', M_P)
@@ -313,6 +332,7 @@ class PwInterface:
 
         tracers = state.get("tracers", np.zeros((self.num_tracers, state["xcc"].shape[0])))
         tracer_energy = state.get("tracer_energy", np.zeros(self.num_tracers))
+        tracer_is_h = state.get("tracer_is_h", np.zeros(self.num_tracers, dtype=bool))
         tracers[0, :] = ne
         start_idx = 1
         for a in self.active_atoms:
@@ -325,9 +345,11 @@ class PwInterface:
             tracers[start_idx:start_idx + pops.shape[0], :] = pops
             for l in range(pops.shape[0]):
                 tracer_energy[start_idx + l] = self.model.rad_set[a].levels[l].E_SI
+            tracer_is_h[start_idx:start_idx + pops.shape[0]] = True
             start_idx += pops.shape[0]
         state["tracers"] = tracers
         state["tracer_energy"] = tracer_energy
+        state["tracer_is_h"] = tracer_is_h
 
     def update_initial_density_profile(self, state, sim_config):
         h_mass = sim_config.get('h_mass', M_P)
@@ -349,6 +371,9 @@ class PwInterface:
             tracers[start_idx:start_idx + pops.shape[0], mask] = pops[:, bc:mask_count+bc][:, ::-1]
             start_idx += pops.shape[0]
         state["tracers"] = tracers
+        h_levels = self.model.eq_pops["H"].shape[0]
+        y = tracers[0] / tracers[1:h_levels+1].sum(axis=0)
+        state["y"] = y
 
     def fill_from_tracers(self, state, sim_config):
         tracers = state["tracers"]
@@ -376,18 +401,31 @@ class PwInterface:
         self.update_atmos(state, sim_config)
         if "tracers" in state:
             self.fill_from_tracers(state, sim_config)
+
+        mask = self.mask_region(state, sim_config)
+        mask_count = np.sum(mask)
+        bc = self.buffer_cells
+        start_of_timestep_losses = True
+        if self.evaluate_radiative_losses and start_of_timestep_losses:
+            for i in range(2):
+                self.model.ctx.formal_sol_gamma_matrices()
+
+            rad_loss = self.compute_rad_loss()
+            gain_minus_loss_start = -np.sum(rad_loss[:, bc:mask_count+bc], axis=0)[::-1]
+
         self.solve_rt(dt=ts.dt)
         state['intensity'] = self.model.ctx.spect.I[:, -1][:, None].copy()
         if "tracers" in state:
             self.update_tracers(state, sim_config)
-        # TODO(cmo): Evaluate losses at start of step and time-average with end-state?
         if self.evaluate_radiative_losses:
-            mask = self.mask_region(state, sim_config)
-            mask_count = np.sum(mask)
-            bc = self.buffer_cells
-
+            # NOTE(cmo): Remove mask evaluation here, because update_tracers
+            # updates y and could mess with it. Otherwise could move the y
+            # update to the EOS.
             rad_loss = self.compute_rad_loss()
             gain_minus_loss = -np.sum(rad_loss[:, bc:mask_count+bc], axis=0)[::-1]
+            if start_of_timestep_losses:
+                theta = 0.55
+                gain_minus_loss = theta * gain_minus_loss + (1.0 - theta) * gain_minus_loss_start
             if not self.dump_full_rad_loss:
                 rad_loss = np.zeros(sources.shape[1])
                 rad_loss[mask] = gain_minus_loss
@@ -398,3 +436,13 @@ class PwInterface:
                 state["full_rad_loss"] = rad_loss_full
 
             sources[IENE, mask] += gain_minus_loss
+            # NOTE(cmo): Update e_ion consistently so we're not messing up the eos
+            tracers = state["tracers"]
+            tracer_energy = state["tracer_energy"]
+            Q = state["Q"]
+            W = state["W"]
+            ion_e = np.sum(tracers * tracer_energy[:, None], axis=0)
+            spec_ion_e = ion_e / Q[IRHO]
+            Q[IIONE] = spec_ion_e
+            W[IIONE] = spec_ion_e
+            # NOTE(cmo): If this is only used as a split source, the IIONE update could be done as a source term, but eh.

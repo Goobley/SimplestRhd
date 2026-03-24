@@ -26,17 +26,23 @@ def tracer_eos(state, sim_config, verbose=False):
     if total_abund is None:
         total_abund = lw.DefaultAtomicAbundance.totalAbundance
     tracer_energy = state.get("tracer_energy", None)
+    tracer_is_h = state.get("tracer_is_h", None)
     min_temperature = sim_config.get("min_temperature", None)
 
     Q = state["Q"]
-    tracers = state["tracers"]
-    ne = tracers[0]
-
-    e_kinetic = 0.5 * Q[IMOM]**2 / Q[IRHO]
-
     rho = Q[IRHO]
     rho_to_nh_tot = 1.0 / (h_mass * mass_per_h)
     nh = rho * rho_to_nh_tot
+    tracers = state["tracers"]
+
+    if tracer_is_h is not None:
+        nh_from_tracer = tracers[tracer_is_h, :].sum(axis=0)
+        tracer_err = nh / nh_from_tracer
+        tracers *= tracer_err[None, :]
+
+    ne = tracers[0]
+    e_kinetic = 0.5 * Q[IMOM]**2 / Q[IRHO]
+
     y = ne / nh
     # NOTE(cmo): Freeze temperature over EOS step
     # TODO(cmo): Use a fixed temperature in the state if present.
