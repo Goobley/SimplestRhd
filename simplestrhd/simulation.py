@@ -24,6 +24,7 @@ from .indices import (
 )
 from .tracers import normalise_tracers, tracer_flux
 from .io import save_snapshot
+from .utils import all_not_none
 
 Array = np.ndarray
 
@@ -40,7 +41,18 @@ class TimestepInfo:
     """associated cfl"""
 
 
-def numeric_flux_with_padding(wL, wR, gamma: float, flux_fn=hll_flux, tracersL=None, tracersR=None):
+def numeric_flux_with_padding(
+        wL,
+        wR,
+        gamma: float,
+        flux_fn=hll_flux,
+        tracersL=None,
+        tracersR=None,
+        heatfL=None,
+        heatfR=None,
+        heatfF=None,
+    ):
+
     """Apply numeric flux with padding for ghost cells.
 
     Args:
@@ -58,15 +70,21 @@ def numeric_flux_with_padding(wL, wR, gamma: float, flux_fn=hll_flux, tracersL=N
     unpadded_flux = flux_fn(
         wR,
         np.roll(wL, -1, axis=1),
-        gamma=gamma
+        gamma=gamma,
+        heatf_l=heatfR,
+        heatf_r=np.roll(heatfL, -1) if heatfL is not None else None,
+        heatf_flux=heatfF,
     )
     full_flux = np.empty((wL.shape[0], wL.shape[1] + 1))
     full_flux[:, 1:] = unpadded_flux
     full_flux[:, :NUM_GHOST] = 0.0
     full_flux[:, -NUM_GHOST:] = 0.0
+    if heatfF is not None:
+        heatfF[:NUM_GHOST] = 0.0
+        heatfF[-NUM_GHOST:] = 0.0
 
     tr_flux = None
-    if tracersL is not None and tracersR is not None:
+    if all_not_none(tracersL, tracersR):
         unpadded_tracer_flux = tracer_flux(
             tracersR,
             np.roll(tracersL, -1, axis=1),
@@ -138,11 +156,13 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
     stepper = sim_config.get("timestepper", "ssprk3")
     run_hydro = sim_config.get("run_hydro", True)
     custom_eos = sim_config.get("eos")
+    htc_use_riemann_flux = sim_config.get("htc_use_riemann_flux", False)
     use_custom_eos = custom_eos is not None
 
     Q_old = Q.copy()
     sources = np.zeros_like(Q)
     tracers_old = state["tracers"].copy() if "tracers" in state else None
+    heatf_old = state["heatf"].copy() if "heatf" in state and htc_use_riemann_flux else None
 
     dt = ts.dt
     if stepper == "rk2":
@@ -167,6 +187,11 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
             tracers = state["tracers"]
             norm_tracers = normalise_tracers(tracers, Q[IRHO])
             n_tracers_L, n_tracers_R = reconstruction_fn(norm_tracers)
+        heatf_L, heatf_R, heatf_flux = None, None, None
+        if heatf_old is not None:
+            heatf = state["heatf"]
+            heatf_L, heatf_R = (x.squeeze() for x in reconstruction_fn(heatf[None, :]))
+            heatf_flux = np.empty(heatf_L.shape[0] + 1)
 
         fluxes, tracer_flux = numeric_flux_with_padding(
             wL,
@@ -174,10 +199,16 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
             gamma=gamma,
             flux_fn=flux_fn,
             tracersL=n_tracers_L,
-            tracersR=n_tracers_R
+            tracersR=n_tracers_R,
+            heatfL=heatf_L,
+            heatfR=heatf_R,
+            heatfF=heatf_flux,
         )
         if not run_hydro:
-            fluxes[...] = 0.0
+            if htc_use_riemann_flux:
+                fluxes[np.arange(fluxes.shape[0]) != IENE, :] = 0.0
+            else:
+                fluxes[...] = 0.0
             if tracer_flux is not None:
                 tracer_flux[...] = 0.0
 
@@ -190,11 +221,17 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
             t_flux_update = -dt / dx * (
                 tracer_flux[:, NUM_GHOST + 1: -NUM_GHOST] - tracer_flux[:, NUM_GHOST : -(NUM_GHOST + 1)]
                 )
+        if heatf_old is not None:
+            heatf_flux_update = -dt / dx * (
+                heatf_flux[NUM_GHOST + 1: -NUM_GHOST] - heatf_flux[NUM_GHOST : -(NUM_GHOST + 1)]
+            )
         if stepper == "rk2":
             if substep == 0:
                 Q[:, NUM_GHOST : -NUM_GHOST] += flux_update
                 if tracers_old is not None:
                     tracers[:, NUM_GHOST : -NUM_GHOST] += t_flux_update
+                if heatf_old is not None:
+                    heatf[NUM_GHOST : -NUM_GHOST] += heatf_flux_update
             else:
                 Q[:, NUM_GHOST : -NUM_GHOST] = 0.5 * (
                     Q_old[:, NUM_GHOST : -NUM_GHOST] + Q[:, NUM_GHOST : -NUM_GHOST] + flux_update
@@ -203,11 +240,17 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
                     tracers[:, NUM_GHOST : -NUM_GHOST] = 0.5 * (
                         tracers_old[:, NUM_GHOST : -NUM_GHOST] + tracers[:, NUM_GHOST : -NUM_GHOST] + t_flux_update
                     )
+                if heatf_old is not None:
+                    heatf[NUM_GHOST : -NUM_GHOST] = 0.5 * (
+                        heatf_old[NUM_GHOST : -NUM_GHOST] + heatf[NUM_GHOST : -NUM_GHOST] + heatf_flux_update
+                    )
         elif stepper == "ssprk3":
             if substep == 0:
                 Q[:, NUM_GHOST : -NUM_GHOST] += flux_update
                 if tracers_old is not None:
                     tracers[:, NUM_GHOST : -NUM_GHOST] += t_flux_update
+                if heatf_old is not None:
+                    heatf[NUM_GHOST : -NUM_GHOST] += heatf_flux_update
             elif substep == 1:
                 Q[:, NUM_GHOST : -NUM_GHOST] = (
                     0.75 * Q_old[:, NUM_GHOST : -NUM_GHOST]
@@ -217,6 +260,11 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
                     tracers[:, NUM_GHOST : -NUM_GHOST] = (
                         0.75 * tracers_old[:, NUM_GHOST : -NUM_GHOST]
                         + 0.25 * (tracers[:, NUM_GHOST : -NUM_GHOST] + t_flux_update)
+                    )
+                if heatf_old is not None:
+                    heatf[NUM_GHOST : -NUM_GHOST] = (
+                        0.75 * heatf_old[NUM_GHOST : -NUM_GHOST]
+                        + 0.25 * (heatf[NUM_GHOST : -NUM_GHOST] + heatf_flux_update)
                     )
             else:
                 Q[:, NUM_GHOST : -NUM_GHOST] = (
@@ -228,11 +276,18 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
                         (1.0 / 3.0) * tracers_old[:, NUM_GHOST : -NUM_GHOST]
                         +  (2.0 / 3.0) * (tracers[:, NUM_GHOST : -NUM_GHOST] + t_flux_update)
                     )
+                if heatf_old is not None:
+                    heatf[NUM_GHOST : -NUM_GHOST] = (
+                        (1.0 / 3.0) * heatf_old[NUM_GHOST : -NUM_GHOST]
+                        + (2.0 / 3.0) * (heatf[NUM_GHOST : -NUM_GHOST] + heatf_flux_update)
+                    )
         elif stepper == "rk4":
             if substep != 2:
                 Q[:, NUM_GHOST : -NUM_GHOST] += 0.5 * flux_update
                 if tracers_old is not None:
                     tracers[:, NUM_GHOST : -NUM_GHOST] += 0.5 * t_flux_update
+                if heatf_old is not None:
+                    heatf[NUM_GHOST : -NUM_GHOST] += 0.5 * heatf_flux_update
             else:
                 Q[:, NUM_GHOST : -NUM_GHOST] = (
                     (2.0 / 3.0) * Q_old[:, NUM_GHOST : -NUM_GHOST]
@@ -244,6 +299,12 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
                         (2.0 / 3.0) * tracers_old[:, NUM_GHOST : -NUM_GHOST]
                         +  (1.0 / 3.0) * tracers[:, NUM_GHOST : -NUM_GHOST]
                         + (1.0 / 6.0) * t_flux_update
+                    )
+                if heatf_old is not None:
+                    heatf[NUM_GHOST : -NUM_GHOST] = (
+                        (2.0 / 3.0) * heatf_old[NUM_GHOST : -NUM_GHOST]
+                        + (1.0 / 3.0) * heatf[NUM_GHOST : -NUM_GHOST]
+                        + (1.0 / 6.0) * heatf_flux_update
                     )
 
         if use_custom_eos:

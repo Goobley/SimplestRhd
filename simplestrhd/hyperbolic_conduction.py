@@ -39,6 +39,7 @@ def compute_heatf_source(state, sim_config, S, temperature, ne, kappa, ts):
     htc_hyperdiffusion = sim_config.get("htc_hyperdiffusion", 0.0)
     htc_despike_strength = sim_config.get("htc_despike_strength", 0.0)
     htc_derivative_order = sim_config.get("htc_order", 1)
+    htc_use_riemann_flux = sim_config.get("htc_use_riemann_flux", False)
     if NUM_GHOST < htc_derivative_order:
         raise ValueError(f"Requires {htc_derivative_order} ghost cells for hyperbolic tc with htc_order={htc_derivative_order}")
     if htc_derivative_order < 1 or htc_derivative_order > 3:
@@ -80,26 +81,27 @@ def compute_heatf_source(state, sim_config, S, temperature, ne, kappa, ts):
     )
     heatf_source = (f_sat * kappa * B_gradT + heatf) / tau
 
-    ene_res = np.zeros_like(temperature)
-    if htc_derivative_order == 1:
-        ene_res[NUM_GHOST:-NUM_GHOST] += 0.5 * inv_dx * (
-            heatf[NUM_GHOST+1:-NUM_GHOST+1] - heatf[NUM_GHOST-1:-NUM_GHOST-1]
-        )
-    elif htc_derivative_order == 2:
-        ene_res[NUM_GHOST:-NUM_GHOST] = inv_dx * (
-            w1 * (heatf[NUM_GHOST+1:-NUM_GHOST+1] - heatf[NUM_GHOST-1:-NUM_GHOST-1]) -
-            w2 * (heatf[NUM_GHOST+2:(-NUM_GHOST+2 if NUM_GHOST > 2 else None)] - heatf[NUM_GHOST-2:-NUM_GHOST-2])
-        )
-    else:
-        ene_res[NUM_GHOST:-NUM_GHOST] = inv_dx * (
-            w1_6 * (heatf[NUM_GHOST+1:-NUM_GHOST+1] - heatf[NUM_GHOST-1:-NUM_GHOST-1])
-            + w2_6 * (heatf[NUM_GHOST+2:-NUM_GHOST+2] - heatf[NUM_GHOST-2:-NUM_GHOST-2])
-            + w3_6 * (heatf[NUM_GHOST+3:(-NUM_GHOST+2 if NUM_GHOST > 3 else None)] - heatf[NUM_GHOST-3:-NUM_GHOST-3])
-        )
+    if not htc_use_riemann_flux:
+        ene_res = np.zeros_like(temperature)
+        if htc_derivative_order == 1:
+            ene_res[NUM_GHOST:-NUM_GHOST] += 0.5 * inv_dx * (
+                heatf[NUM_GHOST+1:-NUM_GHOST+1] - heatf[NUM_GHOST-1:-NUM_GHOST-1]
+            )
+        elif htc_derivative_order == 2:
+            ene_res[NUM_GHOST:-NUM_GHOST] = inv_dx * (
+                w1 * (heatf[NUM_GHOST+1:-NUM_GHOST+1] - heatf[NUM_GHOST-1:-NUM_GHOST-1]) -
+                w2 * (heatf[NUM_GHOST+2:(-NUM_GHOST+2 if NUM_GHOST > 2 else None)] - heatf[NUM_GHOST-2:-NUM_GHOST-2])
+            )
+        else:
+            ene_res[NUM_GHOST:-NUM_GHOST] = inv_dx * (
+                w1_6 * (heatf[NUM_GHOST+1:-NUM_GHOST+1] - heatf[NUM_GHOST-1:-NUM_GHOST-1])
+                + w2_6 * (heatf[NUM_GHOST+2:-NUM_GHOST+2] - heatf[NUM_GHOST-2:-NUM_GHOST-2])
+                + w3_6 * (heatf[NUM_GHOST+3:(-NUM_GHOST+2 if NUM_GHOST > 3 else None)] - heatf[NUM_GHOST-3:-NUM_GHOST-3])
+            )
 
-    if htc_despike_strength > 0.0:
-        ene_res = despike_filter(ene_res, htc_despike_strength)
-    S[IENE, NUM_GHOST:-NUM_GHOST] -= ene_res[NUM_GHOST:-NUM_GHOST]
+        if htc_despike_strength > 0.0:
+            ene_res = despike_filter(ene_res, htc_despike_strength)
+        S[IENE, NUM_GHOST:-NUM_GHOST] -= ene_res[NUM_GHOST:-NUM_GHOST]
 
     if htc_hyperdiffusion > 0.0:
         hyp = htc_hyperdiffusion / ts.dt
@@ -124,7 +126,6 @@ def hyperbolic_thermal_conduction(
     ts
 ):
     Q = state["Q"]
-    dx = state["dx"]
     gamma = state["gamma"]
     y = state.get("y", 1.0)
     h_mass = sim_config.get("h_mass", M_P)

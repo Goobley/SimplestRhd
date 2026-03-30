@@ -16,6 +16,7 @@ from simplestrhd import (
     IIONE,
     NUM_GHOST,
     reconstruct_plm,
+    reconstruct_ppm,
     rusanov_flux,
     hll_flux,
     load_latest_snapshot,
@@ -70,6 +71,7 @@ if __name__ == "__main__":
         "htc_hyperdiffusion": config["htc_hyperdiff"],
         "htc_despike_strength": config["htc_despike"],
         "htc_order": config["htc_order"],
+        "htc_use_riemann_flux": config["htc_use_riemann_flux"],
     }
 
     # Create state dictionary
@@ -83,6 +85,7 @@ if __name__ == "__main__":
         "time": 0.0,
         "snap_num": 0,
         "y": config["y"],
+        "heatf": np.zeros(grid.shape[0]),
     }
 
     # Run simulation

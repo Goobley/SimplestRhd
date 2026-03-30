@@ -74,19 +74,19 @@ config = dict(
     # x_min = -2.2e6,
     # x_max = 2.2e6,
     # num_grid_points = 1500,
-    x_min = -10e6,
-    x_max = 10e6,
-    num_grid_points = 5000,
+    x_min = -20e6,
+    x_max = 20e6,
+    num_grid_points = 10_000,
     gamma = 5/3,
     max_time = 2000.0,
     output_cadence = 0.5,
-    max_cfl = 0.4,
+    max_cfl = 0.2,
     base_pressure = 0.023,
-    base_density = 1e-12,
-    blob_density = 6e-11,
-    blob_delta = 0.2e6,
-    # dip_depth = 0.725e6,
-    dip_depth = 0.01e6,
+    base_density = 1.7e-12,
+    blob_density = 2e-11,
+    blob_delta = 0.4e6,
+    # dip_depth = 0.725e6 * 2,
+    dip_depth = 0.00e6,
 )
 
 PrdBoundary = False
@@ -96,10 +96,10 @@ BackgroundParams = dict(
     vlos=0.0,
     vturb=2e3,
     pressure=config["base_pressure"],
-    nh_tot=config["base_density"] / (const.m_p.value * lw.DefaultAtomicAbundance.massPerH),
-    ne=config["base_density"] / (const.m_p.value * lw.DefaultAtomicAbundance.massPerH),
+    nh_tot=config["base_density"] / (const.m_p.value * lw.DefaultAtomicAbundance.massPerH) * 0.3,
+    ne=config["base_density"] / (const.m_p.value * lw.DefaultAtomicAbundance.massPerH) * 0.3,
 )
-ThresholdTemperature = 150e3
+ThresholdTemperature = 40e3
 SOLAR_G = 2.74e2 # m/s2
 
 class CosineProjectedGravity:
@@ -203,7 +203,7 @@ if __name__ == "__main__":
     sim_config = {
         "reconstruction_fn": reconstruct_plm,
         # TODO(cmo): Look at some artificial (shock) viscosity to smear the TR?
-        "flux_fn": rusanov_flux,
+        "flux_fn": hll_flux,
         "timestepper": "ssprk3",
         # "conduction_fn": implicit_thermal_conduction,
         "conduction_fn": None,
@@ -218,10 +218,11 @@ if __name__ == "__main__":
         "fixed_bcs": None,
         "user_bcs": None,
         "min_temperature": 1e3,
-        "conduction_suppression_Tc": 2e5,
-        "conduction_suppression_Tlow": 5e4,
-        "htc_order": 1,
+        # "conduction_suppression_Tc": 2e5,
+        # "conduction_suppression_Tlow": 25e4,
+        "htc_order": 2,
         "htc_hyperdiffusion": 1e-3,
+        "htc_use_riemann_flux": True,
     }
 
     def condensation_ics(x, gamma, grav):
@@ -307,7 +308,7 @@ if __name__ == "__main__":
             stat_eq=False,
             num_rays=5,
             bc_type=pw.UniformJPromBc,
-            quiet=False,
+            quiet=True,
             buffer_cells=3,
             shrink_threshold=0.85,
             shrink_factor=0.9,
@@ -332,6 +333,8 @@ if __name__ == "__main__":
         0.5 * np.pi,
         1.5 * np.pi
     )
+    if (config['dip_depth'] == 0.0):
+        grav.projected_grav[...] = 0.0
     initial_state, pw_interface = condensation_ics(grid, gamma, grav)
 
     # # Create state dictionary
@@ -346,7 +349,7 @@ if __name__ == "__main__":
                 6e-6, # Ramp damping to exp(3) over 500 km
                 q0_full=np.copy(initial_state['Q'])
             ),
-            grav,
+            # grav,
             TownsendThinLoss('DM', min_temperature=24e3),
             hyperbolic_thermal_conduction,
         ],

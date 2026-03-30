@@ -276,7 +276,8 @@ class PwInterface:
                         print('-- Done')
                     break
             else:
-                breakpoint()
+                # breakpoint()
+                print("Failed to converge.")
 
     def compute_rad_loss(self):
         ctx = self.model.ctx
