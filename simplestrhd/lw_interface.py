@@ -334,6 +334,7 @@ class PwInterface:
         tracers = state.get("tracers", np.zeros((self.num_tracers, state["xcc"].shape[0])))
         tracer_energy = state.get("tracer_energy", np.zeros(self.num_tracers))
         tracer_is_h = state.get("tracer_is_h", np.zeros(self.num_tracers, dtype=bool))
+        tracer_charge = state.get("tracer_charge", np.zeros(self.num_tracers))
         tracers[0, :] = ne
         start_idx = 1
         for a in self.active_atoms:
@@ -346,7 +347,9 @@ class PwInterface:
             tracers[start_idx:start_idx + pops.shape[0], :] = pops
             for l in range(pops.shape[0]):
                 tracer_energy[start_idx + l] = self.model.rad_set[a].levels[l].E_SI
-            tracer_is_h[start_idx:start_idx + pops.shape[0]] = True
+                tracer_charge[start_idx + l] = self.model.rad_set[a].levels[l].stage
+            if a == 'H':
+                tracer_is_h[start_idx:start_idx + pops.shape[0]] = True
             start_idx += pops.shape[0]
         state["tracers"] = tracers
         state["tracer_energy"] = tracer_energy

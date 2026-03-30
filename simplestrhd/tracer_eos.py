@@ -27,6 +27,7 @@ def tracer_eos(state, sim_config, verbose=False):
         total_abund = lw.DefaultAtomicAbundance.totalAbundance
     tracer_energy = state.get("tracer_energy", None)
     tracer_is_h = state.get("tracer_is_h", None)
+    tracer_charge = state.get("tracer_charge", None)
     min_temperature = sim_config.get("min_temperature", None)
 
     Q = state["Q"]
@@ -40,13 +41,21 @@ def tracer_eos(state, sim_config, verbose=False):
         tracer_err = nh / nh_from_tracer
         tracers *= tracer_err[None, :]
 
-    ne = tracers[0]
+    if tracer_charge is not None:
+        ne = np.sum(tracers * tracer_charge[:, None], axis=0)
+        tracers[0, :] = ne
+        ion_e = np.sum(tracers * tracer_energy[:, None], axis=0)
+        spec_ion_e = ion_e / rho
+    else:
+        ne = tracers[0]
+        spec_ion_e = Q[IIONE]
+        ion_e = spec_ion_e * rho
     e_kinetic = 0.5 * Q[IMOM]**2 / Q[IRHO]
 
     y = ne / nh
     # NOTE(cmo): Freeze temperature over EOS step
     # TODO(cmo): Use a fixed temperature in the state if present.
-    pressure = (Q[IENE] - Q[IIONE] * rho - e_kinetic) * (gamma - 1.0)
+    pressure = (Q[IENE] - ion_e - e_kinetic) * (gamma - 1.0)
     temperature = temperature_si(
         pressure,
         nh,
@@ -58,11 +67,6 @@ def tracer_eos(state, sim_config, verbose=False):
     # TODO(cmo): Check how this all behaves relative to the energy update due to changes in ionisation!
     if min_temperature is not None:
         temperature = np.maximum(temperature, min_temperature)
-    if tracer_energy is None:
-        spec_ion_e = y * rho_to_nh_tot * chi_H
-    else:
-        ion_e = np.sum(tracers * tracer_energy[:, None], axis=0)
-        spec_ion_e = ion_e / rho
     etot = (
         1.0 / (gamma - 1.0) * (total_abund + y) * nh * k_B * temperature
         + spec_ion_e * rho
