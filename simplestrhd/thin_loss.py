@@ -9,6 +9,8 @@ from .indices import (
     NUM_GHOST,
 )
 from .eos import temperature_si
+from numba import njit
+from line_profiler import profile
 
 M_P = const.m_p.value
 K_B = const.k_B.value
@@ -49,6 +51,36 @@ lambda_DM = np.array([
     -22.180
 ]) - 13.0 # cgs to SI
 
+logt_DM_cut_10 = np.array([
+    2.0, 3.8, 3.9,
+    4.0, 4.1, 4.2, 4.3, 4.4,
+    4.5, 4.6, 4.7, 4.8, 4.9,
+    5.0, 5.1, 5.2, 5.3, 5.4,
+    5.5, 5.6, 5.7, 5.8, 5.9,
+    6.0, 6.1, 6.2, 6.3, 6.4,
+    6.5, 6.6, 6.7, 6.8, 6.9,
+    7.0, 7.1, 7.2, 7.3, 7.4,
+    7.5, 7.6, 7.7, 7.8, 7.9,
+    8.0, 8.1, 8.2, 8.3, 8.4,
+    8.5, 8.6, 8.7, 8.8, 8.9,
+    9.0
+])
+
+lambda_DM_cut_10 = np.array([
+    -55.0, -45.0, -35.0,
+    -25.407, -23.019, -21.762, -21.742, -21.754,
+    -21.730, -21.523, -21.455, -21.314, -21.229,
+    -21.163, -21.126, -21.092, -21.060, -21.175,
+    -21.280, -21.390, -21.547, -21.762, -22.050,
+    -22.271, -22.521, -22.646, -22.660, -22.676,
+    -22.688, -22.690, -22.662, -22.635, -22.609,
+    -22.616, -22.646, -22.697, -22.740, -22.788,
+    -22.815, -22.785, -22.754, -22.728, -22.703,
+    -22.680, -22.630, -22.580, -22.530, -22.480,
+    -22.430, -22.380, -22.330, -22.280, -22.230,
+    -22.180
+]) - 13.0 # cgs to SI
+
 logt_simple = np.array([
     2.0,
     4.45,
@@ -70,9 +102,46 @@ log_lambda_simple = np.array([
     -22.75,
 ]) - 13.0
 
+USE_NUMBA = True
+
+@njit(cache=True)
+def townsend_core_loop(idx, tef_adj, townsend_Y_k):
+    for i in range(idx.shape[0]):
+        while (idx[i] > 0) and (tef_adj[i] > townsend_Y_k[idx[i]]):
+            idx[i] -= 1
+
+@njit(cache=True)
+def townsend_full_kernel(idxs, temperature, townsend_Y_k, townsend_alpha_k, lambdas, temps, dt_sub, nh_tot, ne, gamma, k_B=const.k_B.value):
+    new_temperature = np.empty(temperature.shape[0])
+    for i in range(idxs.shape[0]):
+        idx = idxs[i]
+        alpha_k_m1 = townsend_alpha_k[idx] - 1.0
+        tef = townsend_Y_k[idx] + (
+            (lambdas[-1] / lambdas[idx])
+            * (temps[idx] / temps[-1])
+            * ((temps[idx] / temperature[i])**alpha_k_m1 - 1.0) / alpha_k_m1
+        )
+
+        tef_adj = tef + lambdas[-1] * dt_sub / temps[-1] * (nh_tot[i] * ne[i]) / (nh_tot[i] + ne[i]) * (gamma - 1.0) / k_B
+        while (idx > 0) and (tef_adj > townsend_Y_k[idx]):
+            idx -= 1
+
+        new_temperature[i] = temps[idx] * (
+            1.0 - (1.0 - townsend_alpha_k[idx]) * (lambdas[idx] / lambdas[-1]) * (temps[-1] / temps[idx]) * (tef_adj - townsend_Y_k[idx])
+            ) ** (1.0/(1.0 - townsend_alpha_k[idx]))
+    return new_temperature
+
+@njit(cache=True)
+def conduction_suppression_correction(temperature, Tc, Tlow):
+    correction = np.ones(temperature.shape[0])
+    for i in range(temperature.shape[0]):
+        if temperature[i] > Tlow and temperature[i] <= Tc:
+            correction[i] = (temperature[i] / Tc)**2.5
+    return correction
+
 class TownsendThinLoss:
     def __init__(self, name: str="DM", min_temperature=None):
-        valid_names = ["DM", "simple"]
+        valid_names = ["DM", "DM_cut_10", "simple"]
         if name not in valid_names:
             raise ValueError(f"Got cooling curve {name}, not in {valid_names}")
 
@@ -82,6 +151,9 @@ class TownsendThinLoss:
         if name == "DM":
             self.log_lambda = lambda_DM
             self.log_t = logt_DM
+        elif name == "DM_cut_10":
+            self.log_lambda = lambda_DM_cut_10
+            self.log_t = logt_DM_cut_10
         elif name == "simple":
             self.log_lambda = log_lambda_simple
             self.log_t = logt_simple
@@ -109,6 +181,7 @@ class TownsendThinLoss:
         self.townsend_Y_k = townsend_Y_k
         self.townsend_alpha_k = townsend_alpha_k
 
+    @profile
     def __call__(self, state, sim_config, sources, ts):
         y = state.get("y", 1.0)
         h_mass = sim_config.get("h_mass", M_P)
@@ -141,24 +214,42 @@ class TownsendThinLoss:
         frac_idx = np.interp(temperature, temps, np.arange(temps.shape[0]))
         idx = frac_idx.astype(np.int32)
 
-        # Compute temporal evolution function
-        alpha_k_m1 = townsend_alpha_k[idx] - 1.0
-        tef = townsend_Y_k[idx] + (
-            (lambdas[-1] / lambdas[idx])
-            * (temps[idx] / temps[-1])
-            * ((temps[idx] / temperature)**alpha_k_m1 - 1.0) / alpha_k_m1
-        )
+        # def townsend_full_kernel(idxs, temperature, townsend_Y_k, townsend_alpha_k, lambdas, temps, dt_sub, nh_tot, ne, gamma):
+        if USE_NUMBA:
+            new_temperature = townsend_full_kernel(
+                idx,
+                temperature,
+                townsend_Y_k,
+                townsend_alpha_k,
+                lambdas,
+                temps,
+                ts.dt_sub,
+                nh_tot,
+                ne,
+                gamma,
+            )
+        else:
+            # Compute temporal evolution function
+            alpha_k_m1 = townsend_alpha_k[idx] - 1.0
+            tef = townsend_Y_k[idx] + (
+                (lambdas[-1] / lambdas[idx])
+                * (temps[idx] / temps[-1])
+                * ((temps[idx] / temperature)**alpha_k_m1 - 1.0) / alpha_k_m1
+            )
 
-        tef_adj = tef + lambdas[-1] * ts.dt_sub / temps[-1] * (nh_tot * ne) / (nh_tot + ne) * (gamma - 1.0) / (const.k_B.value)
-        done = np.zeros(tef_adj.shape[0], dtype=bool)
-        while not np.all(done) and np.any(tef_adj > townsend_Y_k[idx]):
-            mask = tef_adj > townsend_Y_k[idx]
-            idx = np.where(mask, idx - 1, idx)
-            done = (~mask) | (idx == 0)
+            tef_adj = tef + lambdas[-1] * ts.dt_sub / temps[-1] * (nh_tot * ne) / (nh_tot + ne) * (gamma - 1.0) / (const.k_B.value)
+            if USE_NUMBA:
+                townsend_core_loop(idx, tef_adj, townsend_Y_k)
+            else:
+                done = tef_adj <= townsend_Y_k[idx]
+                while not np.all(done):
+                    mask = tef_adj > townsend_Y_k[idx]
+                    idx = np.where(mask & (idx != 0), idx - 1, idx)
+                    done = (tef_adj <= townsend_Y_k[idx]) | (idx == 0)
 
-        new_temperature = temps[idx] * (
-            1.0 - (1.0 - townsend_alpha_k[idx]) * (lambdas[idx] / lambdas[-1]) * (temps[-1] / temps[idx]) * (tef_adj - townsend_Y_k[idx])
-            ) ** (1.0/(1.0 - townsend_alpha_k[idx]))
+            new_temperature = temps[idx] * (
+                1.0 - (1.0 - townsend_alpha_k[idx]) * (lambdas[idx] / lambdas[-1]) * (temps[-1] / temps[idx]) * (tef_adj - townsend_Y_k[idx])
+                ) ** (1.0/(1.0 - townsend_alpha_k[idx]))
 
         if self.min_temperature:
             new_temperature[~ignore_mask] = np.maximum(new_temperature[~ignore_mask], self.min_temperature)
@@ -170,7 +261,10 @@ class TownsendThinLoss:
         Tc = sim_config.get("conduction_suppression_Tc", 0.0)
         Tlow = sim_config.get("conduction_suppression_Tlow", 0.0)
         if Tc > 0.0:
-            correction = np.where((temperature <= Tc) & (temperature > Tlow), (temperature / Tc)**2.5, 1.0)
+            if USE_NUMBA:
+                correction = conduction_suppression_correction(temperature, Tc, Tlow)
+            else:
+                correction = np.where((temperature <= Tc) & (temperature > Tlow), (temperature / Tc)**2.5, 1.0)
             delta_e *= correction
 
         sources[IENE, NUM_GHOST:-NUM_GHOST] += delta_e[NUM_GHOST:-NUM_GHOST] / ts.dt_sub

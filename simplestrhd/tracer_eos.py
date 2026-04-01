@@ -5,17 +5,23 @@ import numpy as np
 
 from .indices import IRHO, IMOM, IENE, IIONE
 from .eos import temperature_si
+from .utils import all_not_none
 
 M_P = const.m_p.value
 CHI_H = const.Ryd.to(u.J, equivalencies=u.spectral()).value
 K_B = const.k_B.value
 
-def tracer_eos(state, sim_config, verbose=False):
+def tracer_eos(state, sim_config, verbose=False, evaluate_initial_ion_e=False):
     """
     Updates the total and ionisation energy to be consistent with the tracer array.
     Assumes tracer array is [ne, n_H, ...]
     Uses tracer_energy as the excitation/ionisation energy per tracer row if
     present in state, otherwise n_e * chi_H
+
+    evaluate_initial_ion_e: bool, optional
+        Assumes the ionisation array needs to be assigned, and thus the
+        ionisation energy calculation from the tracers should not be removed
+        from the total energy, until the latter has been fixed by this routine.
     """
     gamma = state["gamma"]
     mass_per_h = sim_config.get("avg_mass", 1.0)
@@ -41,21 +47,23 @@ def tracer_eos(state, sim_config, verbose=False):
         tracer_err = nh / nh_from_tracer
         tracers *= tracer_err[None, :]
 
-    if tracer_charge is not None:
+    if all_not_none(tracer_charge, tracer_energy):
         ne = np.sum(tracers * tracer_charge[:, None], axis=0)
         tracers[0, :] = ne
         ion_e = np.sum(tracers * tracer_energy[:, None], axis=0)
-        spec_ion_e = ion_e / rho
     else:
         ne = tracers[0]
-        spec_ion_e = Q[IIONE]
-        ion_e = spec_ion_e * rho
+        ion_e = ne * chi_H
+    spec_ion_e = ion_e / rho
     e_kinetic = 0.5 * Q[IMOM]**2 / Q[IRHO]
 
     y = ne / nh
     # NOTE(cmo): Freeze temperature over EOS step
     # TODO(cmo): Use a fixed temperature in the state if present.
-    pressure = (Q[IENE] - ion_e - e_kinetic) * (gamma - 1.0)
+    if evaluate_initial_ion_e:
+        pressure = (Q[IENE] - e_kinetic) * (gamma - 1.0)
+    else:
+        pressure = (Q[IENE] - ion_e - e_kinetic) * (gamma - 1.0)
     temperature = temperature_si(
         pressure,
         nh,
@@ -69,7 +77,7 @@ def tracer_eos(state, sim_config, verbose=False):
         temperature = np.maximum(temperature, min_temperature)
     etot = (
         1.0 / (gamma - 1.0) * (total_abund + y) * nh * k_B * temperature
-        + spec_ion_e * rho
+        + ion_e
         + e_kinetic
     )
 

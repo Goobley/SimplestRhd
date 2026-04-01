@@ -19,3 +19,6 @@ from .tracers import *
 __all__ = [
     # This will include everything exported by the submodules
 ]
+
+import numba
+numba.set_num_threads(4)

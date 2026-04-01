@@ -5,6 +5,8 @@ from typing import Tuple
 import numpy as np
 from .indices import NUM_GHOST
 
+from numba import njit
+
 Array = np.ndarray
 
 
@@ -22,6 +24,7 @@ def reconstruct_fog(W: Array) -> Tuple[Array, Array]:
     return (W.copy(), W.copy())
 
 
+@njit(cache=True)
 def slope_limiter(um, up):
     """Monotonized central difference slope limiter.
 
@@ -38,6 +41,7 @@ def slope_limiter(um, up):
     )
 
 
+@njit(cache=True, parallel=True)
 def reconstruct_plm(W: Array) -> Tuple[Array, Array]:
     """Piecewise linear reconstruction.
 
@@ -50,9 +54,9 @@ def reconstruct_plm(W: Array) -> Tuple[Array, Array]:
         WL, WR: Primitive variables at left and right faces
     """
     # Left edge of cell
-    WL = W.copy()
+    WL = np.empty_like(W)
     # Right edge of cell
-    WR = W.copy()
+    WR = np.empty_like(W)
 
     dwL = W[:, 1:-1] - W[:, :-2]
     dwR = W[:, 2:] - W[:, 1:-1]
@@ -60,8 +64,13 @@ def reconstruct_plm(W: Array) -> Tuple[Array, Array]:
     # slopes
     delta = slope_limiter(dwL, dwR)
 
-    WL[:, 1:-1] = WL[:, 1:-1] - 0.5 * delta
-    WR[:, 1:-1] = WR[:, 1:-1] + 0.5 * delta
+    WL[:, 1:-1] = W[:, 1:-1] - 0.5 * delta
+    WR[:, 1:-1] = W[:, 1:-1] + 0.5 * delta
+
+    WL[:, 0] = W[:, 0]
+    WR[:, 0] = W[:, 0]
+    WL[:, -1] = W[:, -1]
+    WR[:, -1] = W[:, -1]
     return WL, WR
 
 

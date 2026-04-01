@@ -43,20 +43,24 @@ VARIABLE_REGISTRY = {
     # Outgoing intensity
     "intensity": {
         "dims": ["wavelength", "mu"],
-        "description": "Outgoing intensity"
+        "description": "Outgoing intensity",
     },
     "wavelength": {
         "dims": ["wavelength"],
-        "description": "Wavelength grid"
+        "description": "Wavelength grid",
     },
     "rad_loss": {
         "dims": ["x"],
-        "description": "radiative loss per cell"
+        "description": "radiative loss per cell",
     },
     "full_rad_loss": {
         "dims": ["wavelength", "x"],
-        "description": "radiative loss per cell at each wavelength"
+        "description": "radiative loss per cell at each wavelength",
     },
+    "heatf": {
+        "dims": ["x"],
+        "description": "Heat flux used for hyperbolic thermal conduction",
+    }
 }
 VARIABLE_COORD_NAMES = {
     "xcc": "x",

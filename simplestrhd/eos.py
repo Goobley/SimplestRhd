@@ -5,11 +5,13 @@ import numpy as np
 from .indices import IRHO, IMOM, IENE, IIONE, IVEL, IPRE
 import lightweaver as lw
 import astropy.constants as const
+from numba import njit
 
 Array = np.ndarray
 
 K_B = const.k_B.value
 
+@njit(cache=True)
 def cons_to_prim(Q: Array, gamma: float) -> Array:
     """Convert conserved variables to primitive variables.
 
@@ -22,25 +24,27 @@ def cons_to_prim(Q: Array, gamma: float) -> Array:
     """
     W = np.empty_like(Q)
 
-    rho = Q[IRHO, :]
-    mom = Q[IMOM, :]
-    E = Q[IENE, :]
-    spec_e_ion = Q[IIONE, :]
+    for i in range(W.shape[1]):
+        rho = Q[IRHO, i]
+        mom = Q[IMOM, i]
+        E = Q[IENE, i]
+        spec_e_ion = Q[IIONE, i]
 
-    v = mom / rho
-    kinetic = 0.5 * rho * v**2
-    e = E - kinetic - rho * spec_e_ion
-    # e = E - kinetic - spec_e_ion
-    p = (gamma - 1.0) * e
+        v = mom / rho
+        kinetic = 0.5 * rho * v**2
+        e = E - kinetic - rho * spec_e_ion
+        # e = E - kinetic - spec_e_ion
+        p = (gamma - 1.0) * e
 
-    W[IRHO] = rho
-    W[IVEL] = v
-    W[IPRE] = p
-    W[IIONE] = spec_e_ion
+        W[IRHO, i] = rho
+        W[IVEL, i] = v
+        W[IPRE, i] = p
+        W[IIONE, i] = spec_e_ion
 
     return W
 
 
+@njit(cache=True)
 def prim_to_cons(W: Array, gamma: float) -> Array:
     """Convert primitive variables to conserved variables.
 
@@ -53,23 +57,25 @@ def prim_to_cons(W: Array, gamma: float) -> Array:
     """
     Q = np.empty_like(W)
 
-    rho = W[IRHO, :]
-    v = W[IVEL, :]
-    p = W[IPRE, :]
-    spec_e_ion = W[IIONE, :]
+    for i in range(Q.shape[1]):
+        rho = W[IRHO, i]
+        v = W[IVEL, i]
+        p = W[IPRE, i]
+        spec_e_ion = W[IIONE, i]
 
-    mom = rho * v
-    energy = p / (gamma - 1.0) + 0.5 * mom**2 / rho + rho * spec_e_ion
-    # energy = p / (gamma - 1.0) + 0.5 * mom**2 / rho + spec_e_ion
+        mom = rho * v
+        energy = p / (gamma - 1.0) + 0.5 * mom**2 / rho + rho * spec_e_ion
+        # energy = p / (gamma - 1.0) + 0.5 * mom**2 / rho + spec_e_ion
 
-    Q[IRHO] = rho
-    Q[IMOM] = mom
-    Q[IENE] = energy
-    Q[IIONE] = spec_e_ion
+        Q[IRHO, i] = rho
+        Q[IMOM, i] = mom
+        Q[IENE, i] = energy
+        Q[IIONE, i] = spec_e_ion
 
     return Q
 
 
+@njit(cache=True)
 def prim_to_flux(W: Array, gamma: float) -> Array:
     """Compute flux from primitive variables.
 
@@ -81,27 +87,30 @@ def prim_to_flux(W: Array, gamma: float) -> Array:
         flux: Fluxes of conserved variables
     """
     flux = np.empty_like(W)
-    rho = W[IRHO, :]
-    v = W[IVEL, :]
-    p = W[IPRE, :]
-    spec_e_ion = W[IIONE, :]
 
-    mass_flux = rho * v
-    mom_flux = mass_flux * v + p
+    for i in range(flux.shape[1]):
+        rho = W[IRHO, i]
+        v = W[IVEL, i]
+        p = W[IPRE, i]
+        spec_e_ion = W[IIONE, i]
 
-    e_kin = 0.5 * rho * v**2
-    e_tot = p / (gamma - 1.0) + e_kin + rho * spec_e_ion
-    # e_tot = p / (gamma - 1.0) + e_kin + spec_e_ion
-    ene_flux = (e_tot + p) * v
+        mass_flux = rho * v
+        mom_flux = mass_flux * v + p
 
-    flux[IRHO] = mass_flux
-    flux[IMOM] = mom_flux
-    flux[IENE] = ene_flux
-    flux[IIONE] = 0.0
+        e_kin = 0.5 * rho * v**2
+        e_tot = p / (gamma - 1.0) + e_kin + rho * spec_e_ion
+        # e_tot = p / (gamma - 1.0) + e_kin + spec_e_ion
+        ene_flux = (e_tot + p) * v
+
+        flux[IRHO, i] = mass_flux
+        flux[IMOM, i] = mom_flux
+        flux[IENE, i] = ene_flux
+        flux[IIONE, i] = 0.0
 
     return flux
 
 
+@njit(cache=True)
 def sound_speed(W: Array, gamma: float) -> Array:
     """Compute sound speed from primitive variables.
 

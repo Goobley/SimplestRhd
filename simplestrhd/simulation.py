@@ -98,13 +98,13 @@ def numeric_flux_with_padding(
     return full_flux, tr_flux
 
 
-def set_bcs(state, sim_config, dt):
+def set_bcs(state, sim_config, ts):
     """Set boundary conditions.
 
     Args:
         state: State dictionary containing Q, gamma
         sim_config: Simulation config dict containing bc_modes, fixed_bcs, user_bcs
-        dt: Timestep
+        dt: TimestepInfo
     """
     Q = state["Q"]
     bc_modes = sim_config["bc_modes"]
@@ -122,7 +122,7 @@ def set_bcs(state, sim_config, dt):
     elif bc_modes[0] == FIXED_BC:
         Q[:, :NUM_GHOST] = fixed_bc[0][:, None]
     elif bc_modes[0] == USER_BC:
-        user_bcs[0](Q, dt, gamma=gamma)
+        user_bcs[0](Q, state, sim_config, ts)
 
     if bc_modes[1] == SYMMETRIC_BC:
         Q[:, -NUM_GHOST:] = Q[:, -2 * NUM_GHOST : -NUM_GHOST][:, ::-1]
@@ -134,7 +134,7 @@ def set_bcs(state, sim_config, dt):
     elif bc_modes[1] == FIXED_BC:
         Q[:, -NUM_GHOST:] = fixed_bc[1][:, None]
     elif bc_modes[1] == USER_BC:
-        user_bcs[1](Q, dt, gamma=gamma)
+        user_bcs[1](Q, state, sim_config, ts)
 
 
 def run_step(state, sim_config, ts: TimestepInfo, source_terms):
@@ -175,7 +175,7 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
     for substep, dt_sub in enumerate(dt_scheme):
         ts.dt_sub = dt_sub
         fluxes = []
-        set_bcs(state, sim_config, dt_sub)
+        set_bcs(state, sim_config, ts)
 
         sources[...] = 0.0
         w = cons_to_prim(Q, gamma=gamma)
@@ -368,6 +368,9 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
     state["time"] = current_time
     next_output = min(current_time + output_cadence, max_time)
 
+    w = cons_to_prim(state['Q'], gamma=state['gamma'])
+    state['W'] = w
+
     # Save initial snapshot if snapshot_dir is provided
     if snapshot_dir is not None:
         save_snapshot(state, str(snapshot_dir))
@@ -395,7 +398,7 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
         if use_conduction:
             cond_dt = 0.5 * dt if strang_split_conduction else dt
             conduction_fn(state, sim_config, cond_dt)
-            set_bcs(state, sim_config, dt)
+            set_bcs(state, sim_config, timestep_info)
 
         current_time += dt
         state["time"] = current_time

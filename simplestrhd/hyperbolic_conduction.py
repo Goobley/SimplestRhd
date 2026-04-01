@@ -10,15 +10,28 @@ from .indices import (
 import numpy as np
 import astropy.constants as const
 
+from numba import njit
+
 M_P = const.m_p.value
 M_E = const.m_e.value
 K_B = const.k_B.value
 
-def compute_kappa(temperature, kappa0, alpha, beta, Tc, Tlow):
-    T_kappa = temperature
-    if Tc is not None:
-        T_kappa = np.where((T_kappa <= Tc) & (T_kappa > Tlow), Tc, T_kappa)
-    kappa = alpha * kappa0 * T_kappa**beta
+@njit(cache=True)
+def compute_kappa(temperature, kappa0, alpha, beta, Tc=0.0, Tlow=0.0):
+    # T_kappa = temperature
+    # if Tc is not None:
+    #     T_kappa = np.where((T_kappa <= Tc) & (T_kappa > Tlow), Tc, T_kappa)
+    # kappa = alpha * kappa0 * T_kappa**beta
+    if Tc > 0.0:
+        kappa = np.empty_like(temperature)
+        for i in range(kappa.shape[0]):
+            T_kappa = temperature[i]
+            if T_kappa > Tlow and T_kappa <= Tc:
+                T_kappa = Tc
+            kappa[i] = alpha * kappa0 * T_kappa**beta
+    else:
+        kappa = alpha * kappa0 * temperature**beta
+
     return kappa
 
 def despike_filter(q, filter_strength=0.1):
@@ -148,6 +161,6 @@ def hyperbolic_thermal_conduction(
     eint = Q[IENE] - (0.5 * Q[IMOM]**2 / Q[IRHO]) - (Q[IRHO] * Q[IIONE])
     temperature = eint * alpha
 
-    kappa = compute_kappa(temperature, kappa0, alpha=1.0, beta=2.5, Tc=Tc, Tlow=Tlow)
+    kappa = compute_kappa(temperature, kappa0, alpha=1.0, beta=2.5, Tc=0.0 if Tc is None else Tc, Tlow=0.0 if Tlow is None else Tlow)
 
     compute_heatf_source(state, sim_config, sources, temperature, ne, kappa, ts)

@@ -80,11 +80,12 @@ config = dict(
     gamma = 5/3,
     max_time = 2000.0,
     output_cadence = 0.5,
-    max_cfl = 0.2,
+    max_cfl = 0.3,
     base_pressure = 0.023,
     base_density = 1.7e-12,
-    blob_density = 2e-11,
-    blob_delta = 0.4e6,
+    # base_density = 3.4e-12,
+    blob_density = 4e-11,
+    blob_delta = 0.7e6,
     # dip_depth = 0.725e6 * 2,
     dip_depth = 0.00e6,
 )
@@ -99,7 +100,7 @@ BackgroundParams = dict(
     nh_tot=config["base_density"] / (const.m_p.value * lw.DefaultAtomicAbundance.massPerH) * 0.3,
     ne=config["base_density"] / (const.m_p.value * lw.DefaultAtomicAbundance.massPerH) * 0.3,
 )
-ThresholdTemperature = 40e3
+ThresholdTemperature = 120e3
 SOLAR_G = 2.74e2 # m/s2
 
 class CosineProjectedGravity:
@@ -218,10 +219,10 @@ if __name__ == "__main__":
         "fixed_bcs": None,
         "user_bcs": None,
         "min_temperature": 1e3,
-        # "conduction_suppression_Tc": 2e5,
-        # "conduction_suppression_Tlow": 25e4,
-        "htc_order": 2,
-        "htc_hyperdiffusion": 1e-3,
+        "conduction_suppression_Tc": 2e5,
+        "conduction_suppression_Tlow": 25e4,
+        "htc_order": 1,
+        "htc_hyperdiffusion": 1e-2,
         "htc_use_riemann_flux": True,
     }
 
@@ -296,7 +297,7 @@ if __name__ == "__main__":
 
 
         q = prim_to_cons(w, gamma=gamma)
-        state = dict(xcc=x, Q=q, gamma=gamma)
+        state = dict(xcc=x, dx=x[1] - x[0], Q=q, gamma=gamma)
         pw_interface = PwInterface(
             state,
             sim_config,
@@ -320,7 +321,7 @@ if __name__ == "__main__":
         pw_interface.update_initial_density_profile(state, sim_config)
         pw_interface.set_initial_tracers(state, sim_config)
         pw_interface.update_tracers(state, sim_config)
-        tracer_eos(state, sim_config)
+        tracer_eos(state, sim_config, evaluate_initial_ion_e=True)
         return state, pw_interface
 
         # lte_eos(state, sim_config, temp_err_bound=1e-7, find_initial_ion_e=True)

@@ -164,6 +164,7 @@ class PwInterface:
 
     def update_atmos(self, state, sim_config):
         """Update the atmosphere from the state"""
+        # breakpoint()
         mask = self.mask_region(state, sim_config)
         mask_count = np.sum(mask)
         if mask_count + 2 * self.buffer_cells > self.context_length:
