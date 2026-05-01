@@ -185,13 +185,14 @@ if __name__ == "__main__":
             stat_eq=False,
             num_rays=5,
             bc_type=pw.UniformJPromBc,
-            quiet=False,
+            quiet=True,
             buffer_cells=3,
             shrink_threshold=0.85,
             shrink_factor=0.9,
             growth_factor=1.15,
             evaluate_radiative_losses=True,
             pop_tol=4e-4,
+            use_lw_fdiv=True,
         )
         pw_interface.update_initial_density_profile(state, sim_config)
         pw_interface.set_initial_tracers(state, sim_config)

@@ -25,6 +25,7 @@ from .indices import (
 from .tracers import normalise_tracers, tracer_flux
 from .io import save_snapshot
 from .utils import all_not_none
+from copy import copy
 
 Array = np.ndarray
 
@@ -381,8 +382,17 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
         while current_time + dt < next_output:
             dt = np.nextafter(dt, np.inf)
 
+    is_redo = False
     for i in range(max_steps):
         timestep_info = TimestepInfo(current_time, dt, dt, max_cfl)
+
+        state_start_step = {}
+        for k, v in state.items():
+            if k in ["sources", "split_sources"]:
+                state_start_step[k] = v
+            else:
+                state_start_step[k] = copy(v)
+
         if strang_split_conduction:
             conduction_fn(state, sim_config, 0.5 * dt)
         run_step(state, sim_config, timestep_info, state["sources"])
@@ -392,7 +402,21 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
         if split_sources:
             split_state_update = np.zeros_like(state["Q"])
             for s in split_sources:
-                s(state, sim_config, split_state_update, timestep_info)
+                need_redo = s(state, sim_config, split_state_update, timestep_info)
+                if need_redo:
+                    if is_redo:
+                        print("skipping split source terms")
+                        break
+
+                    print("redoing")
+                    state = state_start_step
+                    dt = 0.5 * dt
+                    break
+            if need_redo and not is_redo:
+                is_redo = True
+                continue
+            if is_redo:
+                is_redo = False
             state["Q"][:, NUM_GHOST : -NUM_GHOST] += split_state_update[:, NUM_GHOST : -NUM_GHOST] * timestep_info.dt
 
         if use_conduction:

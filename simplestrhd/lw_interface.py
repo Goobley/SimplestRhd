@@ -48,6 +48,8 @@ class PwInterface:
             dump_full_rad_loss=False,
             pop_tol=1e-3,
             min_size=30,
+            use_lw_fdiv=False,
+            formal_solver="pragmatic_1_fvm_1d",
         ):
         self.threshold_temperature = threshold_temperature
         self.background_params = background_params
@@ -63,6 +65,11 @@ class PwInterface:
         self.dump_full_rad_loss = dump_full_rad_loss
         self.pop_tol = pop_tol
         self.min_size = min_size
+        self.use_lw_fdiv = use_lw_fdiv
+        self.formal_solver = formal_solver
+
+        if use_lw_fdiv and formal_solver != "pragmatic_1_fvm_1d" and not stat_eq:
+            raise RuntimeError("Currently only FVM solver supports internal flux divergence without stat eq")
 
         total_abund = sim_config.get("total_abund", 1.0)
         if total_abund is None:
@@ -152,7 +159,8 @@ class PwInterface:
             BcType=self.bc_type,
             # ctx_kwargs=dict(formalSolver="piecewise_linear_1d"),
             # ctx_kwargs=dict(formalSolver="piecewise_besser_1d"),
-            ctx_kwargs=dict(formalSolver="pragmatic_1_fvm_1d"),
+            # ctx_kwargs=dict(formalSolver="pragmatic_1_fvm_1d"),
+            ctx_kwargs=dict(formalSolver=self.formal_solver),
             conserve_charge=True,
             conserve_pressure=conserve_pressure,
             extra_wavelengths=self.extra_wavelengths,
@@ -161,6 +169,8 @@ class PwInterface:
         self.model.ctx.depthData.fill = True
         self.hz_edges = (lw.compute_wavelength_edges(self.model.ctx) << u.nm).to(u.Hz, equivalencies=u.spectral()).value
         self.hz_bins = np.abs(self.hz_edges[1:] - self.hz_edges[:-1])
+        if self.use_lw_fdiv:
+            self.fdiv = np.zeros((self.model.ctx.spect.wavelength.shape[0], context_length))
 
     def update_atmos(self, state, sim_config):
         """Update the atmosphere from the state"""
@@ -258,12 +268,25 @@ class PwInterface:
 
     def solve_rt(self, dt=None):
         if self.stat_eq or dt is None:
-            self.model.iterate_se(quiet=self.quiet, Nscatter=1, popsTol=self.pop_tol)
+            try:
+                self.model.iterate_se(quiet=self.quiet, Nscatter=1, popsTol=self.pop_tol)
+            except lw.ExplodingMatrixError:
+                # NOTE(cmo): Approximate solution to get rid of any nans
+                self.model.atmos.ne[:] = 0.5 * self.model.atmos.nHTot
+                self.model.ctx.spect.J[...] = 0.0
+                # Fix the LTE populations
+                self.model.ctx.update_deps()
+                for a in self.active_atoms:
+                    self.model.eq_pops.atomicPops[a].n[...] = self.model.eq_pops.atomicPops[a].nStar
+                # Set approximate charge conservation
+                self.model.atmos.ne[:] = self.model.eq_pops["H"][-1]
+                print("Resetting to LTE")
+                self.model.iterate_se(quiet=self.quiet, Nscatter=1, popsTol=self.pop_tol)
         else:
             prev_state = None
             for i in range(2000):
                 ctx = self.model.ctx
-                ctx.formal_sol_gamma_matrices(lambdaIterate=i<1)
+                ctx.formal_sol_gamma_matrices(lambdaIterate=i<1, extraParams=dict(Fdiv=self.fdiv))
                 pops_update, prev_state = ctx.time_dep_update(dt, prev_state)
                 nr_update = ctx.nr_post_update(timeDependentData=dict(dt=dt, nPrev=prev_state))
                 if not self.quiet and i > 50:
@@ -295,6 +318,16 @@ class PwInterface:
         wmu_stack[1::2] = 0.5 * 4.0 * np.pi * atmos.wmu
         full_rad_loss = full_rad_loss_dir.transpose(0, 2, 1) @ wmu_stack
         full_rad_loss_bins = full_rad_loss * self.hz_bins[:, None]
+
+        if self.use_lw_fdiv:
+            TauThreshold = 0.05 # For the mu=1 ray
+            # NOTE(cmo): Use max of up and down
+            chi_vert = np.max(chi_tot[:, -1, :, :], axis=1)
+            dz = self.model.atmos.height[0] - self.model.atmos.height[1]
+            expw = np.exp(-dz * chi_vert / TauThreshold)
+            full_rad_loss_fdiv = self.fdiv * self.hz_bins[:, None]
+            full_rad_loss_bins = expw * full_rad_loss_bins + (1.0 - expw) * full_rad_loss_fdiv
+
         return full_rad_loss_bins
 
     def mask_region(self, state, sim_config):
@@ -418,7 +451,11 @@ class PwInterface:
             rad_loss = self.compute_rad_loss()
             gain_minus_loss_start = -np.sum(rad_loss[:, bc:mask_count+bc], axis=0)[::-1]
 
-        self.solve_rt(dt=ts.dt)
+        try:
+            self.solve_rt(dt=ts.dt)
+        except lw.ExplodingMatrixError:
+            breakpoint()
+            return True
         state['intensity'] = self.model.ctx.spect.I[:, -1][:, None].copy()
         if "tracers" in state:
             self.update_tracers(state, sim_config)

@@ -10,9 +10,12 @@ enum class AloMode {
 
 void pragmatic_1_fvm_1d_impl(
     LwInternal::FormalData* fd,
+    int la,
+    int mu,
     f64 z_mu,
     bool to_obs,
-    f64 I_start
+    f64 I_start,
+    F64View2D Fdiv
 ) {
     JasUnpack((*fd), chi, S, Psi, I, atmos);
     JasUnpack((*atmos), height, Nspace);
@@ -21,6 +24,7 @@ void pragmatic_1_fvm_1d_impl(
     // NOTE(cmo): This is the only correct solution for the Lambda* operator to
     // show the action of Sk on J
     constexpr AloMode alo_mode = AloMode::ImidOnly;
+    const bool compute_fdiv = bool(Fdiv);
 
     int dk = -1;
     int k_start = Nspace - 1;
@@ -38,15 +42,13 @@ void pragmatic_1_fvm_1d_impl(
         const f64 dtau_kp = z_kp * chi_k;
         const f64 dtau = dtau_km + dtau_kp;
 
-        f64 Is = I_upw;
-        f64 I_mid = Is;
+        f64 I_mid = 0.0;
+        f64 I_dw = 0.0;
         f64 Psi_k = 0.0;
-        bool sc = true;
         if (dtau < TrapezThreshold) {
-            sc = false;
             I_mid = (I_upw + dtau_km * Sk) / (1.0 + dtau_km);
             I(k) = I_mid;
-            I_upw = dtau_kp * Sk + (1.0 - dtau_kp) * I_mid;
+            I_dw = dtau_kp * Sk + (1.0 - dtau_kp) * I_mid;
             if (compute_operator) {
                 if constexpr (alo_mode == AloMode::FullCellTransfer) {
                     // Full transfer through cell
@@ -64,9 +66,9 @@ void pragmatic_1_fvm_1d_impl(
             const f64 one_m_edt_km = -std::expm1(-dtau_km);
             const f64 edt_kp = std::exp(-dtau_kp);
             const f64 one_m_edt_kp = -std::expm1(-dtau_kp);
-            f64 I_mid = I_upw * edt_km + Sk * one_m_edt_km;
+            I_mid = I_upw * edt_km + Sk * one_m_edt_km;
             I(k) = I_mid;
-            I_upw = I_mid * edt_kp + Sk * one_m_edt_kp;
+            I_dw = I_mid * edt_kp + Sk * one_m_edt_kp;
             if (compute_operator) {
                 if constexpr (alo_mode == AloMode::FullCellTransfer) {
                     // Full transfer through cell
@@ -82,7 +84,12 @@ void pragmatic_1_fvm_1d_impl(
             }
         }
         Psi(k) = Psi_k;
-        return I_upw;
+        if (compute_fdiv) {
+            // const f64 delta_z = -dk * (z_kp + z_km);
+            const f64 delta_z = (z_kp + z_km);
+            Fdiv(la, k) += 0.5 * 4.0 * Constants::Pi * atmos->wmu(mu) * (I_dw - I_upw) / delta_z * atmos->muz(mu);
+        }
+        return I_dw;
     };
 
     f64 I_upw = I_start;
@@ -118,10 +125,20 @@ void pragmatic_1_fvm_1d(
     int la,
     int mu,
     bool to_obs,
-    const F64View1D& wave
+    const F64View1D& wave,
+    const ExtraParams* extra
 ) {
     JasUnpack((*fd), atmos, chi);
     const f64 wav = wave(la);
+
+    // NOTE(cmo): Because the parallelisation scheme is 1 thread per wavelength
+    // (handling all directions in this bin), we can make this simply a [la, k]
+    // 2D array
+    F64View2D Fdiv;
+    const bool compute_fdiv = extra && extra->contains("Fdiv");
+    if (compute_fdiv) {
+        Fdiv = extra->get_as<F64View2D>("Fdiv");
+    }
 
     const f64 z_mu = 1.0 / atmos->muz(mu);
     const auto& height = atmos->height;
@@ -158,7 +175,7 @@ void pragmatic_1_fvm_1d(
         Iupw = bc.bcData(la, mu_idx, 0);
     }
 
-    pragmatic_1_fvm_1d_impl(fd, z_mu, to_obs, Iupw);
+    pragmatic_1_fvm_1d_impl(fd, la, mu, z_mu, to_obs, Iupw, Fdiv);
 }
 
 extern "C" {
