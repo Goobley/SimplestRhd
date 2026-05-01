@@ -197,7 +197,7 @@ if __name__ == "__main__":
         pw_interface.update_initial_density_profile(state, sim_config)
         pw_interface.set_initial_tracers(state, sim_config)
         pw_interface.update_tracers(state, sim_config)
-        tracer_eos(state, sim_config)
+        tracer_eos(state, sim_config, evaluate_initial_ion_e=True)
 
         return state, pw_interface
 
