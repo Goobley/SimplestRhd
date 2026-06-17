@@ -22,7 +22,7 @@ K_B = 1.0
 config = {
     "max_time": 1.0,
     "output_cadence": 0.125,
-    "max_cfl": 0.8,
+    "max_cfl": 0.05,
     "gamma": 5/3,
     "num_grid_points": 250,
     "x_min": 0.0,
@@ -36,7 +36,7 @@ config = {
 
 def conduction_ics(x, gamma):
     temperature = 0.1 + 0.9*x**5
-    rho = np.ones_like(x) * M_P
+    rho = np.ones_like(x)
     v = np.zeros_like(x)
     p = rho / ((1.0 + config["y"]) * M_P) * K_B * temperature
     w = np.stack([
@@ -51,17 +51,37 @@ def conduction_ics(x, gamma):
 def conduction_bcs():
     return [USER_BC, USER_BC]
 
-def conduction_left_bc(Q, dt, gamma):
+def conduction_left_bc(Q, state, sim_config, ts):
+    x = state['xcc']
+    temperature = 0.1 + 0.9*x**5
+    gamma = state['gamma']
     Q[IRHO, :NUM_GHOST] = 1.0
     Q[IMOM, :NUM_GHOST] = 0.0
-    p = Q[IRHO, :NUM_GHOST] / ((1.0 + config["y"][:NUM_GHOST]) * M_P) * K_B * 0.1
+    p = Q[IRHO, :NUM_GHOST] / ((1.0 + config["y"][:NUM_GHOST]) * M_P) * K_B * temperature[:NUM_GHOST]
     Q[IENE, :NUM_GHOST] = p / (gamma - 1.0)
     Q[IIONE, :NUM_GHOST] = 0.0
+    if "heatf" in state:
+        # state["heatf"][:NUM_GHOST] = state["heatf"][NUM_GHOST]
+        # state["heatf"][:NUM_GHOST] = np.mean(state["heatf"][NUM_GHOST:2*NUM_GHOST])
+        # state["heatf"][:NUM_GHOST] = state["heatf"][NUM_GHOST:2*NUM_GHOST][::-1]
+        # state["heatf"][:NUM_GHOST] = 0.0
+        # state["heatf"][:NUM_GHOST] = -config["kappa0"] * temperature[:NUM_GHOST]**2.5 * 5 * 0.9 * x[:NUM_GHOST]**4
+        pass
 
-def conduction_right_bc(Q, dt, gamma):
+def conduction_right_bc(Q, state, sim_config, ts):
+    x = state['xcc']
+    temperature = 0.1 + 0.9*x**5
+    gamma = state['gamma']
     Q[IRHO, -NUM_GHOST:] = 1.0
     Q[IMOM, -NUM_GHOST:] = 0.0
-    p = Q[IRHO, -NUM_GHOST:] / ((1.0 + config["y"][-NUM_GHOST:]) * M_P) * K_B * 1.0
+    p = Q[IRHO, -NUM_GHOST:] / ((1.0 + config["y"][-NUM_GHOST:]) * M_P) * K_B * temperature[-NUM_GHOST:]
     Q[IENE, -NUM_GHOST:] = p / (gamma - 1.0)
     Q[IIONE, -NUM_GHOST:] = 0.0
+    if "heatf" in state:
+        # state["heatf"][-NUM_GHOST:] = state["heatf"][-NUM_GHOST-1]
+        # state["heatf"][-NUM_GHOST:] = np.mean(state["heatf"][-2*NUM_GHOST:-NUM_GHOST])
+        # state["heatf"][-NUM_GHOST:] = state["heatf"][-2*NUM_GHOST:-NUM_GHOST][::-1]
+        # state["heatf"][-NUM_GHOST:] = 0.0
+        # state["heatf"][-NUM_GHOST:] = -config["kappa0"] * temperature[-NUM_GHOST:]**2.5 * 5 * 0.9 * x[-NUM_GHOST:]**4
+        pass
 

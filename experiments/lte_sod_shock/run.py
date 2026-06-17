@@ -65,13 +65,14 @@ if __name__ == "__main__":
     # Create simulation config
     sim_config = {
         "reconstruction_fn": reconstruct_ppm,
-        "flux_fn": hll_flux,
+        "flux_fn": rusanov_flux,
         "timestepper": "ssprk3",
         "conduction_fn": None,
         "eos": partial(lte_eos, include_ion_e=config["include_ion_e"]),
         "bc_modes": lte_sod_bcs(),
         "fixed_bcs": None,
         "user_bcs": None,
+        "use_spatially_varying_gamma": False,
     }
 
     # Create state dictionary
@@ -84,8 +85,39 @@ if __name__ == "__main__":
         "time": 0.0,
     }
 
+    # Create simulation config 2
+    sim_config_vary_gamma = {
+        "reconstruction_fn": reconstruct_ppm,
+        "flux_fn": rusanov_flux,
+        "timestepper": "ssprk3",
+        "conduction_fn": None,
+        "eos": partial(lte_eos, include_ion_e=config["include_ion_e"]),
+        "bc_modes": lte_sod_bcs(),
+        "fixed_bcs": None,
+        "user_bcs": None,
+        "use_spatially_varying_gamma": True,
+    }
+
+    # Create state dictionary 2
+    state_vary_gamma = {
+        "xcc": grid,
+        "dx": grid[1] - grid[0],
+        "Q": lte_sod_ics(grid, gamma=gamma),
+        "sources": [],
+        "gamma": gamma,
+        "time": 0.0,
+    }
+
     # Run simulation
     print("Running LTE Sod shock tube test case...")
+    run_sim(
+        state_vary_gamma,
+        sim_config_vary_gamma,
+        max_time=config["max_time"],
+        output_cadence=config["output_cadence"],
+        max_cfl=config["max_cfl"],
+    )
+
     run_sim(
         state,
         sim_config,
@@ -96,30 +128,37 @@ if __name__ == "__main__":
 
     # Convert to primitive variables
     w = cons_to_prim(state["Q"], gamma=gamma)
+    w_vg = cons_to_prim(state_vary_gamma["Q"], gamma=gamma)
     final_time = state["time"]
 
     # Extract interior points (excluding ghost cells)
     interior_slice = slice(NUM_GHOST, -NUM_GHOST)
     x_plot = grid[interior_slice] / L0
     rho = w[IRHO, interior_slice] / rho0
+    rho_vg = w_vg[IRHO, interior_slice] / rho0
     v = w[IVEL, interior_slice] / v0
+    v_vg = w_vg[IVEL, interior_slice] / v0
     p = w[IPRE, interior_slice] / (rho0 * v0**2)
+    p_vg = w_vg[IPRE, interior_slice] / (rho0 * v0**2)
 
     # Create plots
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 
     axes[0].plot(x_plot, rho)
+    axes[0].plot(x_plot, rho_vg)
     axes[0].set_ylabel("Density")
     axes[0].set_xlabel("x")
     axes[0].set_title(f"t = {final_time / t0:.3f}")
     axes[0].grid(True)
 
     axes[1].plot(x_plot, v)
+    axes[1].plot(x_plot, v_vg)
     axes[1].set_ylabel("Velocity")
     axes[1].set_xlabel("x")
     axes[1].grid(True)
 
     axes[2].plot(x_plot, p)
+    axes[2].plot(x_plot, p_vg)
     axes[2].set_ylabel("Pressure")
     axes[2].set_xlabel("x")
     axes[2].grid(True)

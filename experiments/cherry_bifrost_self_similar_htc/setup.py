@@ -25,7 +25,7 @@ Tinf = 1e4
 config = {
     "max_time": 3.2,
     "output_cadence": 0.4,
-    "max_cfl": 0.5,
+    "max_cfl": 0.1,
     "gamma": 5/3,
     "num_grid_points": 250,
     "x_min": -LENGTH_SCALE,
@@ -36,10 +36,16 @@ config = {
     "y": np.ones(256),
     "saturate_flux": True,
     # "htc_hyperdiff": 3e-2,
+
+    # "htc_hyperdiff": 0.0,
+    # "htc_despike": 0.3,
+    # "htc_order": 1,
+    # "htc_use_riemann_flux": True,
+
     "htc_hyperdiff": 0.0,
-    "htc_despike": 0.3,
-    "htc_order": 1,
-    "htc_use_riemann_flux": True,
+    "htc_despike": 0.0,
+    "htc_order": 2,
+    "htc_use_riemann_flux": False,
 }
 
 

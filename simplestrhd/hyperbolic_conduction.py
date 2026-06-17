@@ -92,6 +92,7 @@ def compute_heatf_source(state, sim_config, S, temperature, ne, kappa, ts):
         2.0 * ts.dt_sub,
         f_sat * sigma_T_72 * (gamma - 1.0) / (W[IPRE] * (cfl * dx / ts.dt_sub - np.abs(W[IVEL]))**2)
     )
+    # tau = 10.0 * ts.dt
     heatf_source = (f_sat * kappa * B_gradT + heatf) / tau
 
     if not htc_use_riemann_flux:
@@ -128,6 +129,7 @@ def compute_heatf_source(state, sim_config, S, temperature, ne, kappa, ts):
 
 
     heatf[NUM_GHOST:-NUM_GHOST] -= heatf_source[NUM_GHOST:-NUM_GHOST] * ts.dt_sub
+    state['heatf_source'] = heatf_source * ts.dt_sub
     state['heatf'] = heatf
 
 

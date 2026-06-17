@@ -3,7 +3,7 @@ Riemann solvers and flux computation
 """
 import numpy as np
 from .eos import cons_to_prim, prim_to_cons, prim_to_flux, sound_speed
-from .indices import IVEL, IENE
+from .indices import IVEL, IENE, IPRE, IRHO, IIONE
 from .utils import all_not_none
 
 from numba import njit
@@ -12,11 +12,20 @@ Array = np.ndarray
 
 USE_NUMBA = True
 
+@njit(cache=True)
+def compute_spatially_varying_gamma(W: Array, ideal_gamma: float):
+    p = W[IPRE]
+    e_int = p / (ideal_gamma - 1.0) + W[IRHO] * W[IIONE]
+    gamma = p / e_int + 1.0
+    return gamma
+
+
 @njit(cache=True, parallel=True)
 def rusanov_flux_jit(
     WL: Array,
     WR: Array,
     gamma: float,
+    use_spatially_varying_gamma: bool = False,
 ) -> Array:
     vL = WL[IVEL]
     vR = WR[IVEL]
@@ -27,8 +36,14 @@ def rusanov_flux_jit(
     fL = prim_to_flux(WL, gamma)
     fR = prim_to_flux(WR, gamma)
 
-    csL = sound_speed(WL, gamma)
-    csR = sound_speed(WR, gamma)
+    if use_spatially_varying_gamma:
+        local_gamma_l = compute_spatially_varying_gamma(WL, gamma)
+        local_gamma_r = compute_spatially_varying_gamma(WR, gamma)
+        csL = sound_speed(WL, local_gamma_l)
+        csR = sound_speed(WR, local_gamma_r)
+    else:
+        csL = sound_speed(WL, gamma)
+        csR = sound_speed(WR, gamma)
 
     max_c = 0.5 * (csL + np.abs(vL) + csR + np.abs(vR))
 
@@ -43,6 +58,7 @@ def rusanov_flux_jit_heatf(
     heatf_l: Array,
     heatf_r: Array,
     heatf_flux: Array,
+    use_spatially_varying_gamma: bool = False,
 ) -> Array:
     vL = WL[IVEL]
     vR = WR[IVEL]
@@ -75,6 +91,7 @@ def rusanov_flux(
     heatf_l: Array | None = None,
     heatf_r: Array | None = None,
     heatf_flux: Array | None = None,
+    use_spatially_varying_gamma: bool = False,
 ) -> Array:
     """Rusanov (local Lax-Friedrichs) Riemann solver.
 
@@ -92,12 +109,17 @@ def rusanov_flux(
     """
     if USE_NUMBA:
         if all_not_none(heatf_l, heatf_r, heatf_flux):
-            return rusanov_flux_jit_heatf(WL, WR, gamma, heatf_l, heatf_r, heatf_flux)
+            return rusanov_flux_jit_heatf(WL, WR, gamma, heatf_l, heatf_r, heatf_flux, use_spatially_varying_gamma=use_spatially_varying_gamma,)
         else:
-            return rusanov_flux_jit(WL, WR, gamma)
+            return rusanov_flux_jit(WL, WR, gamma, use_spatially_varying_gamma=use_spatially_varying_gamma,)
     else:
         vL = WL[IVEL]
         vR = WR[IVEL]
+        local_gamma_l = gamma
+        local_gamma_r = gamma
+        if use_spatially_varying_gamma:
+            local_gamma_l = compute_spatially_varying_gamma(WL, gamma)
+            local_gamma_r = compute_spatially_varying_gamma(WR, gamma)
 
         qL = prim_to_cons(WL, gamma)
         qR = prim_to_cons(WR, gamma)
@@ -105,8 +127,8 @@ def rusanov_flux(
         fL = prim_to_flux(WL, gamma)
         fR = prim_to_flux(WR, gamma)
 
-        csL = sound_speed(WL, gamma)
-        csR = sound_speed(WR, gamma)
+        csL = sound_speed(WL, local_gamma_l)
+        csR = sound_speed(WR, local_gamma_r)
 
         max_c = 0.5 * (csL + np.abs(vL) + csR + np.abs(vR))
 

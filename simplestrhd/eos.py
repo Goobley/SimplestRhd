@@ -111,7 +111,7 @@ def prim_to_flux(W: Array, gamma: float) -> Array:
 
 
 @njit(cache=True)
-def sound_speed(W: Array, gamma: float) -> Array:
+def sound_speed(W: Array, gamma: float | Array) -> Array:
     """Compute sound speed from primitive variables.
 
     Args:

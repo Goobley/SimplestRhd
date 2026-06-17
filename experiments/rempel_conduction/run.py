@@ -21,6 +21,7 @@ from simplestrhd import (
     load_latest_snapshot,
     load_snapshot,
     implicit_thermal_conduction,
+    hyperbolic_thermal_conduction,
 )
 from setup import *
 
@@ -53,15 +54,18 @@ if __name__ == "__main__":
     sim_config = {
         "reconstruction_fn": reconstruct_ppm,
         "flux_fn": hll_flux,
-        "timestepper": "rk2",
-        "conduction_fn": implicit_thermal_conduction,
+        "timestepper": "rk4",
+        # "conduction_fn": implicit_thermal_conduction,
+        "conduction_fn": None,
         "bc_modes": conduction_bcs(),
         "fixed_bcs": None,
         "user_bcs": [conduction_left_bc, conduction_right_bc],
-        "run_hydro": False,
+        # "run_hydro": False,
         "kappa0": config["kappa0"],
         "h_mass": config["h_mass"],
         "k_B": config["k_B"],
+        "htc_order": 2,
+        "htc_use_riemann_flux": False,
     }
 
     # Create state dictionary
@@ -69,7 +73,9 @@ if __name__ == "__main__":
         "xcc": grid,
         "dx": grid[1] - grid[0],
         "Q": conduction_ics(grid, gamma=gamma),
-        "sources": [],
+        "sources": [
+            hyperbolic_thermal_conduction,
+        ],
         "gamma": gamma,
         "time": 0.0,
         "snap_num": 0,

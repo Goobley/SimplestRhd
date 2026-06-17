@@ -52,6 +52,7 @@ def numeric_flux_with_padding(
         heatfL=None,
         heatfR=None,
         heatfF=None,
+        use_spatially_varying_gamma=False
     ):
 
     """Apply numeric flux with padding for ghost cells.
@@ -75,6 +76,7 @@ def numeric_flux_with_padding(
         heatf_l=heatfR,
         heatf_r=np.roll(heatfL, -1) if heatfL is not None else None,
         heatf_flux=heatfF,
+        # use_spatially_varying_gamma=use_spatially_varying_gamma,
     )
     full_flux = np.empty((wL.shape[0], wL.shape[1] + 1))
     full_flux[:, 1:] = unpadded_flux
@@ -159,6 +161,7 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
     custom_eos = sim_config.get("eos")
     htc_use_riemann_flux = sim_config.get("htc_use_riemann_flux", False)
     use_custom_eos = custom_eos is not None
+    use_spatially_varying_gamma = sim_config.get("use_spatially_varying_gamma", False)
 
     Q_old = Q.copy()
     sources = np.zeros_like(Q)
@@ -204,6 +207,7 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
             heatfL=heatf_L,
             heatfR=heatf_R,
             heatfF=heatf_flux,
+            use_spatially_varying_gamma=use_spatially_varying_gamma,
         )
         if not run_hydro:
             if htc_use_riemann_flux:
