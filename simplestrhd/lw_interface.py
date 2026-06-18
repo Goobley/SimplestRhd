@@ -350,7 +350,7 @@ class PwInterface:
         mask = ~mask
         return mask
 
-    def set_initial_tracers(self, state, sim_config):
+    def set_initial_tracers(self, state, sim_config, setup_cma: bool=False):
         """Fill the tracers array everywhere with LTE -- participating regions will be overwritten later"""
         y = state.get("y", 1.0)
         h_mass = sim_config.get('h_mass', M_P)
@@ -369,9 +369,17 @@ class PwInterface:
         tracer_energy = state.get("tracer_energy", np.zeros(self.num_tracers))
         tracer_is_h = state.get("tracer_is_h", np.zeros(self.num_tracers, dtype=bool))
         tracer_charge = state.get("tracer_charge", np.zeros(self.num_tracers))
+
+        if setup_cma:
+            num_atoms = len(self.active_atoms)
+            t_start = sim_config.get("tracer_cma_start_idx", [0]*num_atoms)
+            t_end = sim_config.get("tracer_cma_end_idx", [0]*num_atoms)
+            t_sum = sim_config.get("tracer_cma_inv_sum", [0.0]*num_atoms)
+
+
         tracers[0, :] = ne
         start_idx = 1
-        for a in self.active_atoms:
+        for ia, a in enumerate(self.active_atoms):
             pops = lw.lte_pops(
                 self.model.rad_set[a],
                 temperature,
@@ -384,10 +392,19 @@ class PwInterface:
                 tracer_charge[start_idx + l] = self.model.rad_set[a].levels[l].stage
             if a == 'H':
                 tracer_is_h[start_idx:start_idx + pops.shape[0]] = True
+            if setup_cma:
+                t_start[ia] = start_idx
+                t_end[ia] = start_idx + pops.shape[0]
+                t_sum[ia] = lw.DefaultAtomicAbundance[a] / (h_mass * self.mass_per_h)
             start_idx += pops.shape[0]
         state["tracers"] = tracers
         state["tracer_energy"] = tracer_energy
         state["tracer_is_h"] = tracer_is_h
+        if setup_cma:
+            sim_config["use_tracer_cma"] = True
+            sim_config["tracer_cma_start_idx"] = t_start
+            sim_config["tracer_cma_end_idx"] = t_end
+            sim_config["tracer_cma_inv_sum"] = t_sum
 
     def update_initial_density_profile(self, state, sim_config):
         h_mass = sim_config.get('h_mass', M_P)
@@ -429,11 +446,13 @@ class PwInterface:
             self.model.eq_pops[a][:, bc:mask_count+bc] = pops[:, ::-1]
             start_idx += num_level
 
-        nh_tot_from_mass = self.model.atmos.nHTot
-        nh_tot_from_n = self.model.eq_pops["H"].sum(axis=0)
-        ratio = nh_tot_from_mass / nh_tot_from_n
-        self.model.eq_pops["H"][...] *= ratio
-        self.model.atmos.ne[...] *= ratio
+        # NOTE(cmo): This should all be handled by CMA
+        if not sim_config.get("use_tracer_cma", False):
+            nh_tot_from_mass = self.model.atmos.nHTot
+            nh_tot_from_n = self.model.eq_pops["H"].sum(axis=0)
+            ratio = nh_tot_from_mass / nh_tot_from_n
+            self.model.eq_pops["H"][...] *= ratio
+            self.model.atmos.ne[...] *= ratio
 
     def __call__(self, state, sim_config, sources, ts):
         self.update_atmos(state, sim_config)

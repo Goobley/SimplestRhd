@@ -22,7 +22,7 @@ from .indices import (
     FIXED_BC,
     USER_BC,
 )
-from .tracers import normalise_tracers, tracer_flux
+from .tracers import normalise_tracers, tracer_flux, tracer_cma_normalisation, tracer_cma_validate, tracer_cma_flattening
 from .io import save_snapshot
 from .utils import all_not_none
 from copy import copy
@@ -159,6 +159,7 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
     custom_eos = sim_config.get("eos")
     htc_use_riemann_flux = sim_config.get("htc_use_riemann_flux", False)
     use_custom_eos = custom_eos is not None
+    use_tracer_cma = sim_config.get("use_tracer_cma", False)
 
     Q_old = Q.copy()
     sources = np.zeros_like(Q)
@@ -188,6 +189,14 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
             tracers = state["tracers"]
             norm_tracers = normalise_tracers(tracers, Q[IRHO])
             n_tracers_L, n_tracers_R = reconstruction_fn(norm_tracers)
+            if use_tracer_cma:
+                t_start = sim_config["tracer_cma_start_idx"]
+                t_end = sim_config["tracer_cma_end_idx"]
+                t_sum = sim_config["tracer_cma_inv_sum"]
+                if sim_config.get("tracer_cma_flatten", False):
+                    tracer_cma_flattening(norm_tracers, n_tracers_L, n_tracers_R)
+                tracer_cma_normalisation(n_tracers_L, t_start, t_end, t_sum)
+                tracer_cma_normalisation(n_tracers_R, t_start, t_end, t_sum)
         heatf_L, heatf_R, heatf_flux = None, None, None
         if heatf_old is not None:
             heatf = state["heatf"]
@@ -368,6 +377,8 @@ def run_sim(state, sim_config, max_time, max_cfl=0.5, max_steps=10_000_000,
     current_time = state.get("time", 0.0)
     state["time"] = current_time
     next_output = min(current_time + output_cadence, max_time)
+
+    tracer_cma_validate(sim_config)
 
     w = cons_to_prim(state['Q'], gamma=state['gamma'])
     state['W'] = w

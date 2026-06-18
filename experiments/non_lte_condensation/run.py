@@ -78,6 +78,7 @@ config = dict(
     base_density = 1e-12,
     blob_density = 5e-11,
     blob_delta = 0.5e6,
+    use_cma = True
 )
 
 PrdBoundary = False
@@ -195,7 +196,7 @@ if __name__ == "__main__":
             use_lw_fdiv=True,
         )
         pw_interface.update_initial_density_profile(state, sim_config)
-        pw_interface.set_initial_tracers(state, sim_config)
+        pw_interface.set_initial_tracers(state, sim_config, setup_cma=config['use_cma'])
         pw_interface.update_tracers(state, sim_config)
         tracer_eos(state, sim_config, evaluate_initial_ion_e=True)
 

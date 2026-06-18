@@ -3,7 +3,7 @@ Riemann solvers and flux computation
 """
 import numpy as np
 from .eos import cons_to_prim, prim_to_cons, prim_to_flux, sound_speed
-from .indices import IVEL, IENE
+from .indices import IVEL, IENE, IPRE, IMOM, IRHO
 from .utils import all_not_none
 
 from numba import njit
@@ -266,3 +266,81 @@ def hll_flux(
         flux = sM * (sR * fL - sL * fR + sR * sL * (qR - qL))
 
         return flux
+
+def hllc_flux(
+        WL: Array,
+        WR: Array,
+        gamma: float,
+        heatf_l: Array | None = None,
+        heatf_r: Array | None = None,
+        heatf_flux: Array | None = None,
+    ) -> Array:
+    """HLLC (Harten-Lax-van Leer Contact) Riemann solver.
+
+    Uses Einfeldt wave speed estimates. Does not currently support heatf
+
+    Args:
+        WL: Left primitive state
+        WR: Right primitive state
+        gamma: Adiabatic index
+        heatf_l: Reconstructed htc q
+        heatf_r: Reconstructed htc q
+        heatf_flux: Output flux in heatf (length should be number of interfaces
+        including ghosts)
+
+    Returns:
+        flux: Numerical flux
+    """
+    if any([x != None for x in [heatf_l, heatf_r, heatf_flux]]):
+        raise ValueError('HLLC does not support heatf')
+
+    csL = sound_speed(WL, gamma)
+    csR = sound_speed(WR, gamma)
+
+    tiny = 1.0e-30
+    # NOTE(cmo): Einfeldt description
+    sqrt_rho_L = np.sqrt(WL[0])
+    sqrt_rho_R = np.sqrt(WR[0])
+    ubar = (sqrt_rho_L * WL[IVEL] + sqrt_rho_R * WR[IVEL]) / (sqrt_rho_L + sqrt_rho_R)
+    eta2 = 0.5 * (sqrt_rho_L * sqrt_rho_R) / (sqrt_rho_L + sqrt_rho_R) ** 2
+    dbar2 = (
+        (sqrt_rho_L * csL**2 + sqrt_rho_R * csR**2) / (sqrt_rho_L + sqrt_rho_R)
+        + eta2 * (WR[IVEL] - WL[IVEL]) ** 2
+    )
+    dbar = np.sqrt(dbar2)
+
+    sL = np.minimum(-tiny, ubar - dbar)
+    sR = np.maximum(tiny, ubar + dbar)
+    sM = 1.0 / (sR - sL)
+
+
+    qL = prim_to_cons(WL, gamma)
+    qR = prim_to_cons(WR, gamma)
+
+    fL = prim_to_flux(WL, gamma)
+    fR = prim_to_flux(WR, gamma)
+
+    ustar = WR[IPRE] - WL[IPRE] + qL[IMOM] * (sL - WL[IVEL]) - qR[IMOM] * (sR - WR[IVEL])
+    ustar /= (WL[IRHO] * (sL - WL[IVEL]) - WR[IRHO] * (sR - WR[IVEL]))
+    pstar = 0.5 * (
+        WL[IPRE] + WR[IPRE] +
+        WL[IRHO] * (sL - WL[IVEL]) * (ustar - WL[IVEL]) +
+        WR[IRHO] * (sR - WR[IVEL]) * (ustar - WR[IVEL])
+    )
+
+    def hllc_state(s, q, pv):
+        s_ustar = 1.0 / (s - ustar + tiny)
+        qstar = np.zeros_like(q)
+        qstar[IRHO] = s_ustar * (s * q[IRHO] - q[IMOM])
+        qstar[IMOM] = qstar[IRHO] * ustar
+        qstar[IENE] = q[IENE] * qstar[IRHO] / q[IRHO] + s_ustar * (pstar * ustar - pv)
+        return qstar
+
+    qstarL = hllc_state(sL, qL, WL[IPRE] * WL[IVEL])
+    qstarR = hllc_state(sR, qR, WR[IPRE] * WR[IVEL])
+    biasL = -np.minimum(-tiny, np.copysign(1.0, ustar))
+    biasR = np.maximum(tiny, np.copysign(1.0, ustar))
+
+    flux = biasR * (fL + sL * (qstarL - qL)) + biasL * (fR + sR * (qstarR - qR))
+
+    return flux
