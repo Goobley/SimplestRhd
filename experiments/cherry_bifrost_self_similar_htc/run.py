@@ -22,6 +22,7 @@ from simplestrhd import (
     load_latest_snapshot,
     load_snapshot,
     hyperbolic_thermal_conduction,
+    sts_thermal_conduction,
 )
 from setup import *
 try:
@@ -79,7 +80,10 @@ if __name__ == "__main__":
         "xcc": grid,
         "dx": grid[1] - grid[0],
         "Q": conduction_ics(grid, gamma=gamma),
-        "sources": [hyperbolic_thermal_conduction],
+        "sources": [
+            # hyperbolic_thermal_conduction,
+            sts_thermal_conduction
+        ],
         "split_sources": [],
         "gamma": gamma,
         "time": 0.0,

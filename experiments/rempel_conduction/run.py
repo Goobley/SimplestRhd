@@ -21,6 +21,8 @@ from simplestrhd import (
     load_latest_snapshot,
     load_snapshot,
     implicit_thermal_conduction,
+    sts_thermal_conduction,
+    explicit_thermal_conduction,
 )
 from setup import *
 
@@ -53,8 +55,8 @@ if __name__ == "__main__":
     sim_config = {
         "reconstruction_fn": reconstruct_ppm,
         "flux_fn": hll_flux,
-        "timestepper": "rk2",
-        "conduction_fn": implicit_thermal_conduction,
+        "timestepper": "ssprk3",
+        "conduction_fn": None,
         "bc_modes": conduction_bcs(),
         "fixed_bcs": None,
         "user_bcs": [conduction_left_bc, conduction_right_bc],
@@ -69,7 +71,10 @@ if __name__ == "__main__":
         "xcc": grid,
         "dx": grid[1] - grid[0],
         "Q": conduction_ics(grid, gamma=gamma),
-        "sources": [],
+        "sources": [
+            sts_thermal_conduction
+            # explicit_thermal_conduction
+        ],
         "gamma": gamma,
         "time": 0.0,
         "snap_num": 0,

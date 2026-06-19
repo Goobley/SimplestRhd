@@ -34,12 +34,12 @@ config = {
     "h_mass": M_P,
     "k_B": K_B,
     "y": np.ones(256),
-    "saturate_flux": True,
+    "saturate_flux": False,
     # "htc_hyperdiff": 3e-2,
     "htc_hyperdiff": 0.0,
-    "htc_despike": 0.3,
+    "htc_despike": 0.0,
     "htc_order": 1,
-    "htc_use_riemann_flux": True,
+    "htc_use_riemann_flux": False,
 }
 
 

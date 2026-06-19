@@ -22,12 +22,13 @@ K_B = 1.0
 config = {
     "max_time": 1.0,
     "output_cadence": 0.125,
-    "max_cfl": 0.8,
+    "max_cfl": 0.1,
     "gamma": 5/3,
     "num_grid_points": 250,
     "x_min": 0.0,
     "x_max": 1.0,
-    "kappa0": 1.0,
+    # NOTE(cmo): This is set so pressure = temperature, i.e. the coupling from pressure to temperature needs to be conserved
+    "kappa0": 1.0 / (5/3 - 1.0),
     "h_mass": M_P,
     "k_B": K_B,
     "y": np.zeros(256),
@@ -51,14 +52,16 @@ def conduction_ics(x, gamma):
 def conduction_bcs():
     return [USER_BC, USER_BC]
 
-def conduction_left_bc(Q, dt, gamma):
+def conduction_left_bc(Q, state, sim_config, ts):
+    gamma = state['gamma']
     Q[IRHO, :NUM_GHOST] = 1.0
     Q[IMOM, :NUM_GHOST] = 0.0
     p = Q[IRHO, :NUM_GHOST] / ((1.0 + config["y"][:NUM_GHOST]) * M_P) * K_B * 0.1
     Q[IENE, :NUM_GHOST] = p / (gamma - 1.0)
     Q[IIONE, :NUM_GHOST] = 0.0
 
-def conduction_right_bc(Q, dt, gamma):
+def conduction_right_bc(Q, state, sim_config, ts):
+    gamma = state['gamma']
     Q[IRHO, -NUM_GHOST:] = 1.0
     Q[IMOM, -NUM_GHOST:] = 0.0
     p = Q[IRHO, -NUM_GHOST:] / ((1.0 + config["y"][-NUM_GHOST:]) * M_P) * K_B * 1.0
