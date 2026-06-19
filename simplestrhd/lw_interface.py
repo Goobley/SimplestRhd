@@ -421,7 +421,30 @@ class PwInterface:
         bc = self.buffer_cells
         tracers[0, mask] = self.model.atmos.ne[bc:mask_count+bc][::-1]
         start_idx = 1
+
+        y = state.get("y", 1.0)
+        h_mass = sim_config.get('h_mass', M_P)
+        q = state["Q"]
+        w = cons_to_prim(q, gamma=state["gamma"])
+        nh_tot = q[IRHO] / (h_mass * self.mass_per_h)
+        ne = nh_tot * y
+        # TODO(cmo): Look at pushing the temperature through the state dict
+        temperature = temperature_si(
+            w[IPRE],
+            nh_tot,
+            y,
+            total_abund=self.total_abund,
+        )
+
         for a in self.active_atoms:
+            # TODO(cmo): Update LTE state?
+            lte_pops = lw.lte_pops(
+                self.model.rad_set[a],
+                temperature,
+                ne,
+                nh_tot * lw.DefaultAtomicAbundance[a]
+            )
+            tracers[start_idx:start_idx + lte_pops.shape[0], :] = lte_pops
             pops = self.model.eq_pops[a]
             tracers[start_idx:start_idx + pops.shape[0], mask] = pops[:, bc:mask_count+bc][:, ::-1]
             start_idx += pops.shape[0]

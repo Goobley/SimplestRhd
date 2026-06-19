@@ -193,7 +193,7 @@ def run_step(state, sim_config, ts: TimestepInfo, source_terms):
                 t_start = sim_config["tracer_cma_start_idx"]
                 t_end = sim_config["tracer_cma_end_idx"]
                 t_sum = sim_config["tracer_cma_inv_sum"]
-                if sim_config.get("tracer_cma_flatten", False):
+                if sim_config.get("tracer_cma_flatten", True):
                     tracer_cma_flattening(norm_tracers, n_tracers_L, n_tracers_R)
                 tracer_cma_normalisation(n_tracers_L, t_start, t_end, t_sum)
                 tracer_cma_normalisation(n_tracers_R, t_start, t_end, t_sum)
