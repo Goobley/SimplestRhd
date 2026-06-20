@@ -1,4 +1,5 @@
-from .indices import IRHO, IENE, IMOM, IIONE, NUM_GHOST
+from .indices import IRHO, IENE, IMOM, IIONE, IPRE, NUM_GHOST
+from numba import njit
 import numpy as np
 
 import astropy.constants as const
@@ -6,23 +7,50 @@ M_P = const.m_p.value
 M_E = const.m_e.value
 K_B = const.k_B.value
 
-def compute_kappa(temperature, kappa0, alpha, beta):
-    kappa = alpha * kappa0 * temperature**beta
+# def compute_kappa(temperature, kappa0, alpha, beta):
+#     kappa = alpha * kappa0 * temperature**beta
+#     return kappa
+
+@njit(cache=True)
+def compute_kappa(temperature, kappa0, alpha, beta, Tc=0.0, Tlow=0.0):
+    if Tc > 0.0:
+        kappa = np.empty_like(temperature)
+        for i in range(kappa.shape[0]):
+            T_kappa = temperature[i]
+            if T_kappa > Tlow and T_kappa <= Tc:
+                T_kappa = Tc
+            kappa[i] = alpha * kappa0 * T_kappa**beta
+    else:
+        kappa = alpha * kappa0 * temperature**beta
+
     return kappa
 
-def compute_explicit_flux(T, kappa, dx):
+def compute_explicit_flux(T, kappa, dx, sat_pre_fac=None):
     dT = T[1:] - T[:-1]
     kappa_face = 0.5 * (kappa[1:] + kappa[:-1])
     q = -kappa_face * dT / dx
+    sat_fac = 1.0
+    if sat_pre_fac is not None:
+        sat_fac = 0.5 * (sat_pre_fac[1:] * T[1:]**1.5 + sat_pre_fac[:-1] * T[:-1]**1.5)
+        sat_fac = 1.0 / (1.0 + np.abs(q) / sat_fac)
+    q *= sat_fac
     return q
 
-def compute_explicit_fdiv(T, kappa, dx):
-    q = compute_explicit_flux(T, kappa, dx)
+def compute_explicit_fdiv(T, kappa, dx, sat_pre_fac=None):
+    q = compute_explicit_flux(T, kappa, dx, sat_pre_fac=sat_pre_fac)
     div_q = np.zeros_like(T)
     div_q[1:-1] = (q[:-1] - q[1:]) / dx
     div_q[:NUM_GHOST] = 0
     div_q[-NUM_GHOST:] = 0
     return div_q
+
+def saturation_pre_factor(ne, k_B=K_B, m_e=M_E):
+    """Electron sound speed free stream variant. Just needs to be multiplied by T**1.5"""
+    return (0.25 * k_B**1.5) / np.sqrt(m_e) * ne
+
+def saturation_pre_factor_cs(gamma, W, temperature, phi=0.55):
+    """Cowie & Mckee 1977 formulation, 5 phi rho c_s**3. Just needs to be multiplied by T**1.5"""
+    return 5.0 * phi * np.sqrt(((gamma * W[IPRE]) / temperature)**3 / W[IRHO])
 
 def compute_temperature(eint, rho, cv):
     alpha = 1.0 / (rho * cv)
@@ -47,6 +75,7 @@ def explicit_thermal_conduction(
     ts
 ):
     Q = state["Q"]
+    W = state["W"]
     dx = state["dx"]
     gamma = state["gamma"]
     y = state.get("y", 1.0)
@@ -55,13 +84,28 @@ def explicit_thermal_conduction(
     k_B = sim_config.get("k_B", K_B)
     mass_per_h = sim_config.get("avg_mass", 1.0)
     total_abund = sim_config.get("total_abund", 1.0)
+    Tc = sim_config.get("conduction_suppression_Tc", 0.0)
+    Tlow = sim_config.get("conduction_suppression_Tlow", 0.0)
+
+    saturate_flux = sim_config.get("saturate_conductive_flux", False)
 
     cv = 1.0 / (gamma - 1.0) * k_B / (h_mass * mass_per_h) * (total_abund + y)
     eint = Q[IENE] - (0.5 * Q[IMOM]**2 / Q[IRHO]) - (Q[IRHO] * Q[IIONE])
     temperature = compute_temperature(eint, Q[IRHO], cv)
-    kappa = compute_kappa(temperature, kappa0, alpha=1.0, beta=2.5)
+    kappa = compute_kappa(
+        temperature,
+        kappa0,
+        alpha=1.0,
+        beta=2.5,
+        Tc=Tc,
+        Tlow=Tlow,
+    )
 
-    flux = compute_explicit_fdiv(temperature, kappa, dx)
+    sat_pre_fac = None
+    if saturate_flux:
+        sat_pre_fac = saturation_pre_factor_cs(gamma, W, temperature)
+
+    flux = compute_explicit_fdiv(temperature, kappa, dx, sat_pre_fac=sat_pre_fac)
     # sources[IENE, NUM_GHOST:-NUM_GHOST] += flux[NUM_GHOST:-NUM_GHOST] * (Q[IRHO] * cv)
     sources[IENE, NUM_GHOST:-NUM_GHOST] += flux[NUM_GHOST:-NUM_GHOST]
 
@@ -74,6 +118,7 @@ def sts_thermal_conduction(
     ts
 ):
     Q = state["Q"]
+    W = state["W"]
     dx = state["dx"]
     gamma = state["gamma"]
     y = state.get("y", 1.0)
@@ -82,8 +127,8 @@ def sts_thermal_conduction(
     k_B = sim_config.get("k_B", K_B)
     mass_per_h = sim_config.get("avg_mass", 1.0)
     total_abund = sim_config.get("total_abund", 1.0)
-    Tc = sim_config.get("conduction_suppression_Tc", None)
-    Tlow = sim_config.get("conduction_suppression_Tlow", None)
+    Tc = sim_config.get("conduction_suppression_Tc", 0.0)
+    Tlow = sim_config.get("conduction_suppression_Tlow", 0.0)
     min_temperature = sim_config.get("min_temperature", 0.0)
 
     saturate_flux = sim_config.get("saturate_conductive_flux", False)
@@ -99,7 +144,14 @@ def sts_thermal_conduction(
     temperature = compute_temperature(eint, Q[IRHO], cv)
     # NOTE(cmo): First determine the number of stages
     # Explicit Timestep
-    kappa = compute_kappa(temperature, kappa0, alpha=1.0, beta=2.5)
+    kappa = compute_kappa(
+        temperature,
+        kappa0,
+        alpha=1.0,
+        beta=2.5,
+        Tc=Tc,
+        Tlow=Tlow,
+    )
     dt_diff = ts.cfl * 0.5 * np.min(((Q[IRHO] * cv * dx**2) / (kappa))[NUM_GHOST:-NUM_GHOST])
     # dt_diff = ts.cfl * 0.5 * np.min((dx**2 / kappa)[NUM_GHOST:-NUM_GHOST])
     stages = 0.5 * np.sqrt(9.0 + 16.0 * (dt / dt_diff)) - 1.0
@@ -137,9 +189,12 @@ def sts_thermal_conduction(
 
     Y[...] = eint[None, :]
 
+    sat_pre_fac = None
+    if saturate_flux:
+        sat_pre_fac = saturation_pre_factor_cs(gamma, W, temperature)
 
     # First stage
-    flux = compute_explicit_fdiv(temperature, kappa, dx)
+    flux = compute_explicit_fdiv(temperature, kappa, dx, sat_pre_fac=sat_pre_fac)
 
     # Lc_Y0 = flux * (Q[IRHO] * cv)
     Lc_Y0 = flux
@@ -151,12 +206,18 @@ def sts_thermal_conduction(
 
     freeze_kappa = True
     for j in range(2, n_stages+1):
-        # breakpoint()
         temperature = compute_temperature(Y[2], Q[IRHO], cv)
         if not freeze_kappa:
-            kappa = compute_kappa(temperature, kappa0, alpha=1.0, beta=2.5)
+            kappa = compute_kappa(
+                temperature,
+                kappa0,
+                alpha=1.0,
+                beta=2.5,
+                Tc=Tc,
+                Tlow=Tlow,
+            )
 
-        flux = compute_explicit_fdiv(temperature, kappa, dx)
+        flux = compute_explicit_fdiv(temperature, kappa, dx, sat_pre_fac=sat_pre_fac)
 
         c0 = gamma_tilde[j] * dt * Lc_Y0
         # Lc_Yj_1 = flux * (Q[IRHO] * cv)

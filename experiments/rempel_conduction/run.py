@@ -64,6 +64,7 @@ if __name__ == "__main__":
         "kappa0": config["kappa0"],
         "h_mass": config["h_mass"],
         "k_B": config["k_B"],
+        "saturate_conductive_flux": True,
     }
 
     # Create state dictionary
