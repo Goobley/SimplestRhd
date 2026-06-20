@@ -66,7 +66,7 @@ if __name__ == "__main__":
     grid = construct_x_grid(
         0.0,
         1.0,
-        50,
+        100,
     )
 
     sim_config = dict(
@@ -164,7 +164,7 @@ if __name__ == "__main__":
     state_cma = state_cma | {
         "sources": []
     }
-    sim_config_cma = sim_config | extra_config_cma | dict(flux_fn=hllc_flux)
+    sim_config_cma = sim_config | extra_config_cma | dict(tracer_cma_flatten=False, flux_fn=hll_flux)
 
     num_iter = run_sim(
         state_cma,
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     state_cma_flat = state_cma_flat | {
         "sources": []
     }
-    flat = sim_config | extra_config_cma_flat | dict(tracer_cma_flatten=True, flux_fn=hllc_flux)
+    flat = sim_config | extra_config_cma_flat | dict(tracer_cma_flatten=True, flux_fn=hll_flux)
 
     num_iter = run_sim(
         state_cma_flat,

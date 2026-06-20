@@ -120,26 +120,27 @@ def tracer_cma_validate(sim_config):
 
 
 
-def tracer_cma_flattening(n_tracer_cc, n_tracer_l, n_tracer_r):
+def tracer_cma_flattening(n_tracer_cc, n_tracer_l, n_tracer_r, tracer_start_idx, tracer_end_idx):
     # NOTE(cmo): Method 2
-    S_L_plus = np.sum(np.maximum(0.0, n_tracer_l - n_tracer_cc), axis=0)
-    S_L_minus = np.sum(np.maximum(0.0, n_tracer_cc - n_tracer_l), axis=0)
-    S_R_plus = np.sum(np.maximum(0.0, n_tracer_r - n_tracer_cc), axis=0)
-    S_R_minus = np.sum(np.maximum(0.0, n_tracer_cc - n_tracer_r), axis=0)
+    for (start, end) in zip(tracer_start_idx, tracer_end_idx):
+        S_L_plus = np.sum(np.maximum(0.0, n_tracer_l[start:end] - n_tracer_cc[start:end]), axis=0)
+        S_L_minus = np.sum(np.maximum(0.0, n_tracer_cc[start:end] - n_tracer_l[start:end]), axis=0)
+        S_R_plus = np.sum(np.maximum(0.0, n_tracer_r[start:end] - n_tracer_cc[start:end]), axis=0)
+        S_R_minus = np.sum(np.maximum(0.0, n_tracer_cc[start:end] - n_tracer_r[start:end]), axis=0)
 
-    delta_i_min_L = np.minimum(S_L_plus, S_L_minus)
-    delta_i_min_R = np.minimum(S_R_plus, S_R_minus)
-    delta_i_max_L = np.maximum(S_L_plus, S_L_minus)
-    delta_i_max_R = np.maximum(S_R_plus, S_R_minus)
-    s_L = 0.5 * np.abs(
-        np.sign(n_tracer_r - n_tracer_l) - np.sign(S_L_plus - S_L_minus)
-    )
-    s_R = 0.5 * np.abs(
-        np.sign(n_tracer_r - n_tracer_l) + np.sign(S_R_plus - S_R_minus)
-    )
-    beta = 0.25
-    w_L = s_L * np.maximum(0.0, np.minimum(1.0, beta * (delta_i_max_L - delta_i_min_L) / (delta_i_min_L + 1e-20)))
-    w_R = s_R * np.maximum(0.0, np.minimum(1.0, beta * (delta_i_max_R - delta_i_min_R) / (delta_i_min_R + 1e-20)))
+        delta_i_min_L = np.minimum(S_L_plus, S_L_minus)
+        delta_i_min_R = np.minimum(S_R_plus, S_R_minus)
+        delta_i_max_L = np.maximum(S_L_plus, S_L_minus)
+        delta_i_max_R = np.maximum(S_R_plus, S_R_minus)
+        s_L = 0.5 * np.abs(
+            np.sign(n_tracer_r[start:end] - n_tracer_l[start:end]) - np.sign(S_L_plus - S_L_minus)
+        )
+        s_R = 0.5 * np.abs(
+            np.sign(n_tracer_r[start:end] - n_tracer_l[start:end]) + np.sign(S_R_plus - S_R_minus)
+        )
+        beta = 0.25
+        w_L = s_L * np.maximum(0.0, np.minimum(1.0, beta * (delta_i_max_L - delta_i_min_L) / (delta_i_min_L + 1e-20)))
+        w_R = s_R * np.maximum(0.0, np.minimum(1.0, beta * (delta_i_max_R - delta_i_min_R) / (delta_i_min_R + 1e-20)))
 
-    n_tracer_l[...] = w_L * n_tracer_cc + (1.0 - w_L) * n_tracer_l
-    n_tracer_r[...] = w_R * n_tracer_cc + (1.0 - w_R) * n_tracer_r
+        n_tracer_l[start:end, :] = w_L * n_tracer_cc[start:end] + (1.0 - w_L) * n_tracer_l[start:end]
+        n_tracer_r[start:end, :] = w_R * n_tracer_cc[start:end] + (1.0 - w_R) * n_tracer_r[start:end]
